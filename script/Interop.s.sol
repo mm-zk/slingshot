@@ -144,6 +144,8 @@ contract InteropE2E is Script {
         console.log("found msg");
         console.logBytes32(msgHash);
 
+        vm.startBroadcast();
+
         // Decode the serialized InteropMessage from the event payload
 
         // Step 6: Execute the InteropBundle on the InteropCenter
@@ -151,13 +153,14 @@ contract InteropE2E is Script {
             eventPayload,
             (InteropCenter.InteropMessage)
         );
-        console.log("interop sen", interopMessage.sender);
-        console.log("interop chain", interopMessage.sourceChainId);
-        console.log("interop num", interopMessage.messageNum);
 
         interopCenter.executeInteropBundle(interopMessage, "0x"); // Pass an empty proof for simplicity
 
         console.log("Executed InteropBundle:");
         console.logBytes32(msgHash);
+
+        console.log(greeter.getGreeting());
+
+        vm.stopBroadcast();
     }
 }

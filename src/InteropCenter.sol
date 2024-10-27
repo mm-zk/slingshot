@@ -33,7 +33,7 @@ contract InteropCenter {
         uint256 messageNum;
     }
 
-    function sendInteropMessage(bytes memory data) public returns (bytes32) {
+    function sendInteropMessage(bytes memory data) external returns (bytes32) {
         // Increment message count
         interopMessagesSent++;
 
@@ -44,6 +44,9 @@ contract InteropCenter {
             sourceChainId: block.chainid,
             messageNum: interopMessagesSent
         });
+
+        console2.log("Sending interop from ", msg.sender);
+        console2.log("Interop id: ", interopMessagesSent);
 
         // Serialize the entire InteropMessage struct
         bytes memory serializedMessage = abi.encode(message);
@@ -159,7 +162,9 @@ contract InteropCenter {
         bytes memory serializedData = abi.encode(fullBundle);
 
         // Send the serialized data via interop message
-        bytes32 msgHash = sendInteropMessage(serializedData);
+        bytes32 msgHash = InteropCenter(address(this)).sendInteropMessage(
+            serializedData
+        );
 
         // Clean up
         delete bundles[bundleId];
@@ -174,6 +179,8 @@ contract InteropCenter {
         bytes calldata payload,
         uint256 value
     ) public returns (bytes32) {
+        console2.log("Inside sendCall for", address(this));
+        console2.log("sender is", msg.sender);
         // Step 1: Start a new bundle
         uint256 bundleId = startBundle(destinationChain);
 
@@ -206,27 +213,12 @@ contract InteropCenter {
         bytes memory proof
     ) public {
         // Verify the message sender is a trusted source
-        console2.log("source chain", message.sourceChainId);
-        console2.log("sender", message.sender);
 
         require(
             trustedSources[message.sourceChainId] == message.sender,
             "Untrusted source"
         );
         console2.log("inside ");
-        console2.logBytes32(keccak256(abi.encode(message)));
-
-        console2.logBytes32(
-            keccak256(
-                abi.encodePacked(
-                    message.sender,
-                    message.sourceChainId,
-                    message.messageNum,
-                    message.data
-                )
-            )
-        );
-        console2.log("msg num", message.messageNum);
         require(
             verifyInteropMessage(keccak256(abi.encode(message)), proof),
             "Message not verified"
@@ -247,11 +239,16 @@ contract InteropCenter {
                 )
             );
 
-            address accountAddress = _getCreate2Address(salt);
+            console2.log("creation hash");
+            console2.logBytes32(keccak256(type(InteropAccount).creationCode));
+
+            address accountAddress = _getZKSyncCreate2Address(salt);
+            console2.log("Aliased account ", accountAddress);
 
             // If account does not exist, deploy it
             if (!isContract(accountAddress)) {
-                new InteropAccount{salt: salt}(address(this));
+                console2.log("aliased account missing - deploy new one");
+                new InteropAccount{salt: salt}();
             }
 
             // Call the interop function on the account
@@ -278,6 +275,49 @@ contract InteropCenter {
             );
     }
 
+    function getZKSyncBytecodeHash(
+        bytes memory code
+    ) internal pure returns (bytes32) {
+        require(code.length >= 100, "Data must be at least 100 bytes");
+
+        bytes32 result;
+        // Load 32 bytes starting from the 68th byte
+        assembly {
+            result := mload(add(code, 68)) // 68 + 32 = 100
+        }
+        return result;
+    }
+
+    function _getZKSyncCreate2Address(
+        bytes32 salt
+    ) internal view returns (address) {
+        console2.log("Elements");
+        console2.logBytes32(keccak256("zksyncCreate2"));
+        console2.logBytes32(bytes32(uint256(uint160(address(this)))));
+        console2.logBytes32(salt);
+        console2.logBytes32(keccak256(type(InteropAccount).creationCode));
+        console2.logBytes32(keccak256(""));
+        console2.log("done");
+        return
+            address(
+                uint160(
+                    uint256(
+                        keccak256(
+                            bytes.concat(
+                                keccak256("zksyncCreate2"), // zkSync-specific prefix
+                                bytes32(uint256(uint160(address(this)))), // Address of the contract deployer
+                                salt, // Salt for the deployment
+                                getZKSyncBytecodeHash(
+                                    type(InteropAccount).creationCode
+                                ), // Hash of the bytecode
+                                keccak256("") // Hash of the constructor input data
+                            )
+                        )
+                    )
+                )
+            );
+    }
+
     // Check if an address is a contract
     function isContract(address addr) internal view returns (bool) {
         uint256 size;
@@ -292,8 +332,8 @@ contract InteropAccount {
     address public trustedInteropCenter;
 
     // Constructor to set the trusted interop center
-    constructor(address _trustedInteropCenter) {
-        trustedInteropCenter = _trustedInteropCenter;
+    constructor() {
+        trustedInteropCenter = msg.sender;
     }
 
     // Execute function to forward interop call
@@ -301,6 +341,8 @@ contract InteropAccount {
         InteropCenter.InteropCall calldata interopCall
     ) external {
         require(msg.sender == trustedInteropCenter, "Untrusted interop center");
+        console2.log("Inside aliased account", address(this));
+        console2.log("destination", interopCall.destinationAddress);
 
         // Forward the call to the destination address
         (bool success, ) = interopCall.destinationAddress.call{
