@@ -2,6 +2,13 @@
 pragma solidity ^0.8.0;
 import "../lib/forge-std/src/console2.sol";
 
+import {IAccount, ACCOUNT_VALIDATION_SUCCESS_MAGIC} from "../lib/era-contracts/system-contracts/contracts/interfaces/IAccount.sol";
+import {Transaction, TransactionHelper} from "../lib/era-contracts/system-contracts/contracts/libraries/TransactionHelper.sol";
+import {Utils} from "../lib/era-contracts/system-contracts/contracts/libraries/Utils.sol";
+import {BOOTLOADER_FORMAL_ADDRESS, DEPLOYER_SYSTEM_CONTRACT} from "../lib/era-contracts/system-contracts/contracts/Constants.sol";
+import {EfficientCall} from "../lib/era-contracts/system-contracts/contracts/libraries/EfficientCall.sol";
+import {SystemContractHelper} from "../lib/era-contracts/system-contracts/contracts/libraries/SystemContractHelper.sol";
+
 contract InteropCenter {
     uint256 public interopMessagesSent;
     address public owner;
@@ -328,7 +335,9 @@ contract InteropCenter {
     }
 }
 
-contract InteropAccount {
+contract InteropAccount is IAccount {
+    using TransactionHelper for *;
+
     address public trustedInteropCenter;
 
     // Constructor to set the trusted interop center
@@ -349,5 +358,102 @@ contract InteropAccount {
             value: interopCall.value
         }(interopCall.data);
         require(success, "Interop call failed");
+    }
+
+    function validateTransaction(
+        bytes32 _txHash,
+        bytes32 _suggestedSignedHash,
+        Transaction calldata _transaction
+    ) external payable returns (bytes4 magic) {
+        magic = ACCOUNT_VALIDATION_SUCCESS_MAGIC;
+    }
+
+    function executeTransaction(
+        bytes32 _txHash,
+        bytes32 _suggestedSignedHash,
+        Transaction calldata _transaction
+    ) external payable {
+        address to = address(uint160(_transaction.to));
+        uint128 value = Utils.safeCastToU128(_transaction.value);
+        bytes calldata data = _transaction.data;
+        uint32 gas = Utils.safeCastToU32(gasleft());
+
+        // Note, that the deployment method from the deployer contract can only be called with a "systemCall" flag.
+        bool isSystemCall;
+        if (to == address(DEPLOYER_SYSTEM_CONTRACT) && data.length >= 4) {
+            bytes4 selector = bytes4(data[:4]);
+            // Check that called function is the deployment method,
+            // the others deployer method is not supposed to be called from the default account.
+            isSystemCall =
+                selector == DEPLOYER_SYSTEM_CONTRACT.create.selector ||
+                selector == DEPLOYER_SYSTEM_CONTRACT.create2.selector ||
+                selector == DEPLOYER_SYSTEM_CONTRACT.createAccount.selector ||
+                selector == DEPLOYER_SYSTEM_CONTRACT.create2Account.selector;
+        }
+        bool success = EfficientCall.rawCall({
+            _gas: gas,
+            _address: to,
+            _value: value,
+            _data: data,
+            _isSystem: isSystemCall
+        });
+        if (!success) {
+            EfficientCall.propagateRevert();
+        }
+    }
+
+    // There is no point in providing possible signed hash in the `executeTransactionFromOutside` method,
+    // since it typically should not be trusted.
+    function executeTransactionFromOutside(
+        Transaction calldata _transaction
+    ) external payable {
+        revert();
+    }
+
+    function payForTransaction(
+        bytes32 _txHash,
+        bytes32 _suggestedSignedHash,
+        Transaction calldata _transaction
+    ) external payable {
+        bool success = _transaction.payToTheBootloader();
+        require(success, "Failed to pay the fee to the operator");
+    }
+
+    function prepareForPaymaster(
+        bytes32 _txHash,
+        bytes32 _possibleSignedHash,
+        Transaction calldata _transaction
+    ) external payable {
+        revert();
+    }
+
+    modifier ignoreNonBootloader() {
+        if (msg.sender != BOOTLOADER_FORMAL_ADDRESS) {
+            // If function was called outside of the bootloader, behave like an EOA.
+            assembly {
+                return(0, 0)
+            }
+        }
+        // Continue execution if called from the bootloader.
+        _;
+    }
+
+    /**
+     * @dev Simulate the behavior of the EOA if it is called via `delegatecall`.
+     * Thus, the default account on a delegate call behaves the same as EOA on Ethereum.
+     * If all functions will use this modifier AND the contract will implement an empty payable fallback()
+     * then the contract will be indistinguishable from the EOA when called.
+     */
+    modifier ignoreInDelegateCall() {
+        address codeAddress = SystemContractHelper.getCodeAddress();
+        if (codeAddress != address(this)) {
+            // If the function was delegate called, behave like an EOA.
+            assembly {
+                return(0, 0)
+            }
+        }
+
+        // Continue execution if not delegate called.
+        _;
     }
 }
