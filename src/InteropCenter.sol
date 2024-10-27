@@ -82,8 +82,14 @@ contract InteropCenter {
 
     // Type B - Interop Call & Bundles
 
+    // Struct for storage without dynamic array (as solidity doesn't support it)
+    struct StoredInteropBundle {
+        uint256 destinationChain;
+    }
     // Mappings to store bundles by their ID
-    mapping(uint256 => InteropBundle) public bundles;
+    mapping(uint256 => StoredInteropBundle) public bundles;
+    mapping(uint256 => InteropCall[]) public bundleCalls;
+
     uint256 public nextBundleId = 1; // Unique identifier for each bundle
 
     struct InteropCall {
@@ -102,8 +108,9 @@ contract InteropCenter {
     // Function to start a new bundle
     function startBundle(uint256 destinationChain) public returns (uint256) {
         uint256 bundleId = nextBundleId++;
-        bundles[bundleId] = InteropBundle({
-            calls: new InteropCall[](0),
+
+        // Store only the destination chain in the storage mapping
+        bundles[bundleId] = StoredInteropBundle({
             destinationChain: destinationChain
         });
 
@@ -133,23 +140,33 @@ contract InteropCenter {
         });
 
         // Add the call to the bundle
-        bundles[bundleId].calls.push(newCall);
+        bundleCalls[bundleId].push(newCall);
     }
 
     // Function to finish and send the bundle
     function finishAndSendBundle(uint256 bundleId) public returns (bytes32) {
-        // Retrieve the bundle and ensure it exists
-        InteropBundle storage bundle = bundles[bundleId];
-        require(bundle.calls.length > 0, "Bundle is empty");
+        // Ensure the bundle exists and has calls
+        require(
+            bundles[bundleId].destinationChain != 0,
+            "Bundle does not exist"
+        );
+        require(bundleCalls[bundleId].length > 0, "Bundle is empty");
+
+        // Prepare the full InteropBundle in memory for serialization
+        InteropBundle memory fullBundle = InteropBundle({
+            calls: bundleCalls[bundleId],
+            destinationChain: bundles[bundleId].destinationChain
+        });
 
         // Serialize the bundle data
-        bytes memory serializedData = abi.encode(bundle);
+        bytes memory serializedData = abi.encode(fullBundle);
 
         // Send the serialized data via interop message
         bytes32 msgHash = sendInteropMessage(serializedData);
 
-        // Clean up the bundle storage
+        // Clean up
         delete bundles[bundleId];
+        delete bundleCalls[bundleId];
 
         return msgHash;
     }
