@@ -16,6 +16,8 @@ contract InteropCenter {
         _;
     }
 
+    // Type A - Interop Message
+
     // Interop Event
     event InteropMessageSent(
         bytes32 indexed msgHash,
@@ -30,7 +32,7 @@ contract InteropCenter {
         uint256 messageNum;
     }
 
-    function sendInteropMessage(bytes calldata data) public returns (bytes32) {
+    function sendInteropMessage(bytes memory data) public returns (bytes32) {
         // Increment message count
         interopMessagesSent++;
 
@@ -77,4 +79,85 @@ contract InteropCenter {
     ) public view returns (bool) {
         return receivedMessages[msgHash];
     }
+
+    // Type B - Interop Call & Bundles
+
+    // Mappings to store bundles by their ID
+    mapping(uint256 => InteropBundle) public bundles;
+    uint256 public nextBundleId = 1; // Unique identifier for each bundle
+
+    struct InteropCall {
+        address sourceSender;
+        address destinationAddress;
+        uint256 destinationChainId;
+        bytes data;
+        uint256 value;
+    }
+
+    struct InteropBundle {
+        InteropCall[] calls;
+        uint256 destinationChain;
+    }
+
+    // Function to start a new bundle
+    function startBundle(uint256 destinationChain) public returns (uint256) {
+        uint256 bundleId = nextBundleId++;
+        bundles[bundleId] = InteropBundle({
+            calls: new InteropCall[](0),
+            destinationChain: destinationChain
+        });
+
+        return bundleId;
+    }
+
+    function addToBundle(
+        uint256 bundleId,
+        uint256 destinationChainId,
+        address destinationAddress,
+        bytes calldata payload,
+        uint256 value
+    ) public {
+        // Ensure the bundle exists and has the correct destination chain
+        require(
+            bundles[bundleId].destinationChain == destinationChainId,
+            "Destination chain mismatch"
+        );
+
+        // Create the InteropCall
+        InteropCall memory newCall = InteropCall({
+            sourceSender: msg.sender,
+            destinationAddress: destinationAddress,
+            destinationChainId: destinationChainId,
+            data: payload,
+            value: value
+        });
+
+        // Add the call to the bundle
+        bundles[bundleId].calls.push(newCall);
+    }
+
+    // Function to finish and send the bundle
+    function finishAndSendBundle(uint256 bundleId) public returns (bytes32) {
+        // Retrieve the bundle and ensure it exists
+        InteropBundle storage bundle = bundles[bundleId];
+        require(bundle.calls.length > 0, "Bundle is empty");
+
+        // Serialize the bundle data
+        bytes memory serializedData = abi.encode(bundle);
+
+        // Send the serialized data via interop message
+        bytes32 msgHash = sendInteropMessage(serializedData);
+
+        // Clean up the bundle storage
+        delete bundles[bundleId];
+
+        return msgHash;
+    }
+
+    function sendCall(
+        uint256 destinationChain,
+        address destinationAddress,
+        bytes calldata payload,
+        uint256 value
+    ) public returns (bool) {}
 }
