@@ -1,0 +1,27 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alloy-zksync = { path = "../../alloy-zksync"}
+
+alloy = { version = "0.4", features = ["full", "rlp", "serde", "sol-types"] } # TODO: Set features granularly?
+async-trait = "0.1.80"
+futures-utils-wasm = "0.1.0"
+k256 = "0.13.3"
+rand = "0.8.5"
+reqwest = "0.12.8"
+serde = "1.0.203"
+thiserror = "1.0.61"
+tracing = "0.1.40"
+url = "2.5.2"
+tokio = { version = "1", features = ["full"] }
+anyhow = { version = "1.0" }
+
+
+
+
+[patch.crates-io]
+# Needed until https://github.com/alloy-rs/alloy/pull/1466 is released
+alloy = { git = "https://github.com/alloy-rs/alloy.git", rev = "a5e06ec5e98e877497cbe22557083b6c3e755bc6" }
