@@ -5,9 +5,11 @@ import "../lib/forge-std/src/console2.sol";
 import {IAccount, ACCOUNT_VALIDATION_SUCCESS_MAGIC} from "../lib/era-contracts/system-contracts/contracts/interfaces/IAccount.sol";
 import {Transaction, TransactionHelper} from "../lib/era-contracts/system-contracts/contracts/libraries/TransactionHelper.sol";
 import {Utils} from "../lib/era-contracts/system-contracts/contracts/libraries/Utils.sol";
-import {BOOTLOADER_FORMAL_ADDRESS, DEPLOYER_SYSTEM_CONTRACT} from "../lib/era-contracts/system-contracts/contracts/Constants.sol";
+import {BOOTLOADER_FORMAL_ADDRESS, DEPLOYER_SYSTEM_CONTRACT, NONCE_HOLDER_SYSTEM_CONTRACT, INonceHolder} from "../lib/era-contracts/system-contracts/contracts/Constants.sol";
 import {EfficientCall} from "../lib/era-contracts/system-contracts/contracts/libraries/EfficientCall.sol";
 import {SystemContractHelper} from "../lib/era-contracts/system-contracts/contracts/libraries/SystemContractHelper.sol";
+import {IContractDeployer} from "../lib/era-contracts/system-contracts/contracts/ContractDeployer.sol";
+import {SystemContractsCaller} from "../lib/era-contracts/system-contracts/contracts/libraries/SystemContractsCaller.sol";
 
 contract InteropCenter {
     uint256 public interopMessagesSent;
@@ -249,13 +251,36 @@ contract InteropCenter {
             console2.log("creation hash");
             console2.logBytes32(keccak256(type(InteropAccount).creationCode));
 
-            address accountAddress = _getZKSyncCreate2Address(salt);
+            address payable accountAddress = payable(
+                _getZKSyncCreate2Address(salt)
+            );
             console2.log("Aliased account ", accountAddress);
 
             // If account does not exist, deploy it
             if (!isContract(accountAddress)) {
                 console2.log("aliased account missing - deploy new one");
-                new InteropAccount{salt: salt}();
+
+                address payable contractDeployer = payable(
+                    0x0000000000000000000000000000000000008006
+                );
+                bytes32 bytecodeHash = getZKSyncBytecodeHash(
+                    type(InteropAccount).creationCode
+                );
+
+                SystemContractsCaller.systemCallWithPropagatedRevert(
+                    uint32(gasleft()),
+                    contractDeployer,
+                    0,
+                    abi.encodeCall(
+                        IContractDeployer.create2Account,
+                        (
+                            salt,
+                            bytecodeHash,
+                            "",
+                            IContractDeployer.AccountAbstractionVersion.Version1
+                        )
+                    )
+                );
             }
 
             // Call the interop function on the account
@@ -365,6 +390,17 @@ contract InteropAccount is IAccount {
         bytes32 _suggestedSignedHash,
         Transaction calldata _transaction
     ) external payable returns (bytes4 magic) {
+        SystemContractsCaller.systemCallWithPropagatedRevert(
+            uint32(gasleft()),
+            address(NONCE_HOLDER_SYSTEM_CONTRACT),
+            0,
+            abi.encodeCall(
+                INonceHolder.incrementMinNonceIfEquals,
+                (_transaction.nonce)
+            )
+        );
+
+        // TODO: add authorization
         magic = ACCOUNT_VALIDATION_SUCCESS_MAGIC;
     }
 
@@ -455,5 +491,16 @@ contract InteropAccount is IAccount {
 
         // Continue execution if not delegate called.
         _;
+    }
+
+    fallback() external payable ignoreInDelegateCall {
+        // fallback of default account shouldn't be called by bootloader under no circumstances
+        assert(msg.sender != BOOTLOADER_FORMAL_ADDRESS);
+
+        // If the contract is called directly, behave like an EOA
+    }
+
+    receive() external payable {
+        // If the contract is called directly, behave like an EOA
     }
 }
