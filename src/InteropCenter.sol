@@ -279,6 +279,7 @@ contract InteropCenter {
         bytes memory proof
     ) public {
         // Verify the message sender is a trusted source
+        console2.log("starting interop bundle exec");
 
         require(
             trustedSources[message.sourceChainId] == message.sender,
@@ -443,8 +444,8 @@ contract InteropCenter {
         bytes32 bundleHash,
         bytes32 feesBundleHash,
         address destinationPaymaster,
-        bytes calldata destinationPaymasterInput
-    ) external returns (bytes32) {
+        bytes memory destinationPaymasterInput
+    ) public returns (bytes32) {
         console2.log("Sending interoptx with sender", msg.sender);
         // Create the InteropTransaction struct
         InteropTransaction memory transaction = InteropTransaction({
@@ -470,6 +471,33 @@ contract InteropCenter {
         );
 
         return msgHash;
+    }
+
+    function requestInteropMinimal(
+        uint256 destinationChain,
+        address destinationAddress,
+        bytes calldata payload,
+        uint256 value,
+        uint256 gasLimit,
+        uint256 gasPrice
+    ) public returns (bytes32) {
+        bytes32 bundleHash = sendCall(
+            destinationChain,
+            destinationAddress,
+            payload,
+            value
+        );
+        return
+            sendInteropTransaction(
+                destinationChain,
+                gasLimit,
+                gasPrice,
+                value,
+                bundleHash,
+                bytes32(0),
+                address(0),
+                new bytes(0)
+            );
     }
 }
 
@@ -513,6 +541,10 @@ contract InteropAccount is IAccount {
             )
         );
 
+        // We have to verify following things:
+        //
+        // * change this transaction into 'interop message' - and check.
+
         // TODO: add authorization
         magic = ACCOUNT_VALIDATION_SUCCESS_MAGIC;
     }
@@ -523,8 +555,14 @@ contract InteropAccount is IAccount {
         Transaction calldata _transaction
     ) external payable {
         address to = address(uint160(_transaction.to));
+        console2.log("inside execute tx to:", to);
         uint128 value = Utils.safeCastToU128(_transaction.value);
         bytes calldata data = _transaction.data;
+        console2.log("Selector");
+        console2.logBytes32(bytes32(data[:32]));
+        console2.log("gas", gasleft());
+        console2.log("value", value);
+
         uint32 gas = Utils.safeCastToU32(gasleft());
 
         // Note, that the deployment method from the deployer contract can only be called with a "systemCall" flag.
@@ -539,6 +577,7 @@ contract InteropAccount is IAccount {
                 selector == DEPLOYER_SYSTEM_CONTRACT.createAccount.selector ||
                 selector == DEPLOYER_SYSTEM_CONTRACT.create2Account.selector;
         }
+
         bool success = EfficientCall.rawCall({
             _gas: gas,
             _address: to,

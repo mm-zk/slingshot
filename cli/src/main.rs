@@ -69,8 +69,15 @@ sol! {
 
         function receiveInteropMessage(bytes32 msgHash) public;
 
+        function addTrustedSource(
+            uint256 sourceChainId,
+            address trustedSender
+        ) public;
 
-
+        function deployAliasedAccount(
+            address sourceAccount,
+            uint256 sourceChainId
+        ) public returns (address);
     }
 }
 
@@ -145,6 +152,71 @@ impl InteropMessageParsed {
 
         println!("Got 'from' address set to: {:?}", from_addr);
 
+        let code = destination_interop_chain
+            .provider
+            .get_code_at(from_addr)
+            .await
+            .unwrap();
+        println!("Code length is {}", code.len());
+        if code.len() == 0 {
+            // No contract deployed.
+
+            let admin_provider = zksync_provider()
+                .with_recommended_fillers()
+                .wallet(destination_interop_chain.admin_wallet.clone())
+                .on_http(destination_interop_chain.rpc.parse().unwrap());
+
+            let contract =
+                InteropCenter::new(destination_interop_chain.interop_address, &admin_provider);
+
+            // TODO: before sending, maybe check if the message was forwarded already..
+
+            let tx_hash = contract
+                .deployAliasedAccount(
+                    interop_tx.sourceChainSender,
+                    self.interop_message.sourceChainId,
+                )
+                .send()
+                .await
+                .unwrap()
+                .watch()
+                .await
+                .unwrap();
+
+            println!(
+                "Deployed aliased account on chain {} {:?} with tx {:?}",
+                destination_chain_id, from_addr, tx_hash
+            );
+        }
+
+        let balance = destination_interop_chain
+            .provider
+            .get_balance(from_addr)
+            .await
+            .unwrap();
+
+        let mut limit: U256 = 1_000_000.try_into().unwrap();
+        limit = limit.checked_mul(1_000_000.try_into().unwrap()).unwrap();
+        limit = limit.checked_mul(1_000_000.try_into().unwrap()).unwrap();
+
+        if balance < limit {
+            let admin_provider = zksync_provider()
+                .with_recommended_fillers()
+                .wallet(destination_interop_chain.admin_wallet.clone())
+                .on_http(destination_interop_chain.rpc.parse().unwrap());
+            let tx = TransactionRequest::default()
+                .with_to(from_addr)
+                .with_value(limit);
+            let tx_hash = admin_provider
+                .send_transaction(tx)
+                .await
+                .unwrap()
+                .watch()
+                .await
+                .unwrap();
+            println!("Sending 1 eth : {:?} ", tx_hash);
+        }
+
         let map = all_messages.lock().await;
 
         let bundle_msg = map.get(&interop_tx.bundleHash).unwrap();
@@ -155,8 +227,6 @@ impl InteropMessageParsed {
             bundle_msg.interop_message.clone(),
             proof,
         ));
-
-        // TODO: add calldata too.
 
         (
             destination_chain_id,
@@ -377,6 +447,35 @@ async fn main() -> anyhow::Result<()> {
             panic!(
                 "Two interops with the same chain id {} -- {} and {} ",
                 chain_id, rpc, prev.rpc
+            );
+        }
+    }
+    for (_, source_chain) in &providers_map {
+        for (_, destination_chain) in &providers_map {
+            let admin_provider = zksync_provider()
+                .with_recommended_fillers()
+                .wallet(destination_chain.admin_wallet.clone())
+                .on_http(destination_chain.rpc.parse().unwrap());
+
+            let contract = InteropCenter::new(destination_chain.interop_address, &admin_provider);
+
+            // TODO: before sending, maybe check if trust was already set?
+
+            let tx_hash = contract
+                .addTrustedSource(
+                    source_chain.chain_id.try_into().unwrap(),
+                    source_chain.interop_address,
+                )
+                .send()
+                .await
+                .unwrap()
+                .watch()
+                .await
+                .unwrap();
+
+            println!(
+                "Trust from {} to {} tx {:?}",
+                source_chain.chain_id, destination_chain.chain_id, tx_hash
             );
         }
     }
