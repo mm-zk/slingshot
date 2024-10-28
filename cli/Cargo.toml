@@ -24,7 +24,6 @@ futures = "0.3"
 
 
 
-
 [patch.crates-io]
 # Needed until https://github.com/alloy-rs/alloy/pull/1466 is released
 alloy = { git = "https://github.com/alloy-rs/alloy.git", rev = "a5e06ec5e98e877497cbe22557083b6c3e755bc6" }

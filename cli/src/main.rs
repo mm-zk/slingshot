@@ -25,6 +25,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use tokio::sync::Mutex;
 
 use InteropCenter::InteropMessage;
 
@@ -66,13 +67,17 @@ sol! {
         function executeInteropBundle(
             InteropMessage memory message,
             bytes memory proof
-        ) public ;
+        ) public;
+
+
+        function receiveInteropMessage(bytes32 msgHash) public;
+
 
 
     }
 }
 
-struct InteropMessageParsed {
+pub struct InteropMessageParsed {
     pub interop_center_sender: Address,
     // The unique global identifier of this message.
     pub msg_hash: FixedBytes<32>,
@@ -83,6 +88,7 @@ struct InteropMessageParsed {
     pub data: Bytes,
 
     pub interop_message: InteropCenter::InteropMessage,
+    pub chain_id: u64,
 }
 
 impl Debug for InteropMessageParsed {
@@ -97,7 +103,7 @@ impl Debug for InteropMessageParsed {
 }
 
 impl InteropMessageParsed {
-    pub fn from_log(log: &Log) -> Self {
+    pub fn from_log(log: &Log, chain_id: u64) -> Self {
         let interop_message =
             InteropCenter::InteropMessage::abi_decode(&log.data().data.slice(64..), true).unwrap();
 
@@ -107,6 +113,7 @@ impl InteropMessageParsed {
             sender: Address::from_slice(&log.topics()[2].0[12..]),
             data: log.data().data.clone(),
             interop_message,
+            chain_id,
         }
     }
 
@@ -119,17 +126,17 @@ impl InteropMessageParsed {
 
     pub async fn create_transaction_request(
         &self,
-        providers_map: &HashMap<u64, InteropChain>,
-        all_messages: &HashMap<FixedBytes<32>, InteropMessage>,
-    ) -> TransactionRequest {
+        providers_map: &HashMap<u64, Arc<InteropChain>>,
+        all_messages: Arc<Mutex<HashMap<FixedBytes<32>, InteropMessageParsed>>>,
+    ) -> (u64, TransactionRequest) {
         let interop_tx =
             InteropCenter::InteropTransaction::abi_decode(&self.interop_message.data[1..], true)
                 .unwrap();
 
         println!("interop tx desxtination: {}", interop_tx.destinationChain);
-        let destination_interop_chain = providers_map
-            .get(&interop_tx.destinationChain.try_into().unwrap())
-            .unwrap();
+
+        let destination_chain_id: u64 = interop_tx.destinationChain.try_into().unwrap();
+        let destination_interop_chain = providers_map.get(&destination_chain_id).unwrap();
 
         let from_addr = destination_interop_chain
             .get_aliased_account_address(
@@ -141,30 +148,38 @@ impl InteropMessageParsed {
 
         println!("Got 'from' address set to: {:?}", from_addr);
 
-        let bundle_msg = all_messages.get(&interop_tx.bundleHash).unwrap();
+        let map = all_messages.lock().await;
+
+        let bundle_msg = map.get(&interop_tx.bundleHash).unwrap();
 
         let proof = Bytes::new();
 
-        let calldata = InteropCenter::executeInteropBundleCall::new((bundle_msg.clone(), proof));
+        let calldata = InteropCenter::executeInteropBundleCall::new((
+            bundle_msg.interop_message.clone(),
+            proof,
+        ));
 
         // TODO: add calldata too.
 
-        TransactionRequest::default()
-            .with_call(&calldata)
-            .with_to(destination_interop_chain.interop_address)
-            .with_value(interop_tx.value)
-            .with_gas_limit(interop_tx.gasLimit.try_into().unwrap())
-            .with_gas_per_pubdata(U256::from(50_000))
-            .with_max_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
-            .with_max_priority_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
-            .with_from(from_addr)
+        (
+            destination_chain_id,
+            TransactionRequest::default()
+                .with_call(&calldata)
+                .with_to(destination_interop_chain.interop_address)
+                .with_value(interop_tx.value)
+                .with_gas_limit(interop_tx.gasLimit.try_into().unwrap())
+                .with_gas_per_pubdata(U256::from(50_000))
+                .with_max_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
+                .with_max_priority_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
+                .with_from(from_addr),
+        )
     }
 
     // Checks if the interop message is of type b.
 }
 
 #[derive(Clone)]
-struct InteropChain {
+pub struct InteropChain {
     pub provider: alloy::providers::fillers::FillProvider<
         alloy::providers::fillers::JoinFill<
             alloy::providers::Identity,
@@ -185,6 +200,7 @@ struct InteropChain {
     >,
     pub interop_address: Address,
     pub rpc: String,
+    pub chain_id: u64,
 }
 
 const BLOCKS_IN_THE_PAST: u64 = 1000;
@@ -207,9 +223,10 @@ impl InteropChain {
             ._0
     }
 
-    pub async fn listen_on_interop_messages<F>(&self, callback: F)
+    pub async fn listen_on_interop_messages<F, Fut>(&self, callback: F)
     where
-        F: Fn(Log),
+        F: Fn(Log) -> Fut,
+        Fut: futures::future::Future<Output = ()>,
     {
         let latest_block = self.provider.get_block_number().await.unwrap();
 
@@ -222,7 +239,7 @@ impl InteropChain {
         let logs = self.provider.get_logs(&filter).await.unwrap();
 
         for log in logs {
-            callback(log);
+            callback(log).await;
         }
 
         println!("Starting to watch logs...");
@@ -236,23 +253,55 @@ impl InteropChain {
 
         while let Some(log) = log_stream.next().await {
             for l in log {
-                callback(l);
+                callback(l).await;
             }
         }
     }
 }
 
-/*
-impl<P, T, N> InteropChain<P, T, N>
-where
-    P: Provider<T, N>,
-    T: Transport + Clone,
-    N: Network,
-{
-    pub async fn get_recent_messages(&self, recent_blocks: u64) {
-        let latest_block = self.provider.get_block_number().await.unwrap();
+async fn handle_type_a_message(
+    msg: &InteropMessageParsed,
+    providers_map: &HashMap<u64, Arc<InteropChain>>,
+) {
+    // Forward the message to all the other chains.
+    for (_, entry) in providers_map {
+        let contract = InteropCenter::new(entry.interop_address, &entry.provider);
+
+        // Notify each chain about the message.
+        contract
+            .receiveInteropMessage(msg.msg_hash)
+            .call()
+            .await
+            .unwrap();
     }
-}*/
+}
+
+async fn handle_type_c_message(
+    msg: &InteropMessageParsed,
+    providers_map: &HashMap<u64, Arc<InteropChain>>,
+    shared_map: Arc<Mutex<HashMap<FixedBytes<32>, InteropMessageParsed>>>,
+) {
+    // TODO: also create the aliased account if needed...
+
+    let (destination_chain, tx) = msg
+        .create_transaction_request(providers_map, shared_map.clone())
+        .await;
+    let receipt = providers_map
+        .get(&destination_chain)
+        .unwrap()
+        .provider
+        .send_transaction(tx)
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    println!(
+        "Sent type C tx to: {} hash: {}",
+        destination_chain, receipt.inner.transaction_hash
+    )
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "Ethereum Interop CLI")]
@@ -297,6 +346,7 @@ async fn main() -> anyhow::Result<()> {
                 provider,
                 interop_address,
                 rpc: rpc.clone(),
+                chain_id,
             }),
         );
         if let Some(prev) = prev {
@@ -307,19 +357,40 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    //let mut all_messages = HashMap::new();
+    let shared_map: Arc<Mutex<HashMap<FixedBytes<32>, InteropMessageParsed>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     let handles: Vec<_> = providers_map
+        .clone()
         .iter()
         .map(|(_, entry)| {
             let entry2 = Arc::clone(&entry);
             println!("Starting the spawn..");
+            let shared_map = shared_map.clone();
+            let providers_map = providers_map.clone();
             let handle = tokio::task::spawn(async move {
+                let shared_map = shared_map.clone();
+                let chain_id = entry2.chain_id;
                 entry2
                     .listen_on_interop_messages(|log| {
-                        let msg = InteropMessageParsed::from_log(&log);
+                        let shared_map = shared_map.clone();
+                        let providers_map = providers_map.clone();
+                        let chain_id = chain_id.clone();
+                        async move {
+                            let msg = InteropMessageParsed::from_log(&log, chain_id);
 
-                        println!("Got msg {:?}", msg);
+                            println!("Got msg {:?}", msg);
+
+                            handle_type_a_message(&msg, &providers_map).await;
+
+                            if msg.is_type_c() {
+                                handle_type_c_message(&msg, &providers_map, shared_map.clone())
+                                    .await;
+                            }
+                            let mut map = shared_map.lock().await;
+
+                            map.insert(msg.msg_hash, msg);
+                        }
                     })
                     .await;
             });
@@ -328,61 +399,6 @@ async fn main() -> anyhow::Result<()> {
         .collect();
 
     futures::future::join_all(handles).await;
-
-    /*for (_, entry) in providers_map {
-        let entry2 = Arc::clone(&entry);
-        println!("Starting the spawn..");
-        let handle = tokio::task::spawn(async move {
-            entry2
-                .listen_on_interop_messages(|log| {
-                    let msg = InteropMessageParsed::from_log(&log);
-
-                    println!("Got msg {:?}", msg);
-                })
-                .await;
-        });
-        /*
-        let latest_block = entry.provider.get_block_number().await.unwrap();
-
-        // Look at last 1k blocks.
-        let filter = Filter::new()
-            .from_block(latest_block.saturating_sub(1000))
-            .event_signature(InteropCenter::InteropMessageSent::SIGNATURE_HASH)
-            .address(entry.interop_address);
-        let logs = entry.provider.get_logs(&filter).await?;
-
-        let msgs: Vec<_> = logs
-            .iter()
-            .map(|l| InteropMessageParsed::from_log(l))
-            .collect();
-
-        for m in &msgs {
-            all_messages.insert(m.msg_hash, m.interop_message.clone());
-        }
-
-        println!("Got {} msgs", msgs.len());
-
-        for m in msgs {
-            let is_type_b = m.is_type_b();
-            dbg!(is_type_b);
-            let is_type_c = m.is_type_c();
-            dbg!(is_type_c);
-
-            if is_type_c {
-                let tx = m
-                    .create_transaction_request(&providers_map, &all_messages)
-                    .await;
-
-                let receipt = entry
-                    .provider
-                    .send_transaction(tx)
-                    .await?
-                    .get_receipt()
-                    .await?;
-                println!("Got receipt: {receipt:#?}");
-            }
-        }*/
-    }*/
 
     // We have to support 2 things:
     // * for each 'interop message' - 'deliver' it to all the other locations
