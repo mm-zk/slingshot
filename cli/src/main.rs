@@ -18,7 +18,14 @@ use k256::ecdsa::SigningKey;
 use alloy::sol;
 
 use clap::Parser;
-use std::{collections::HashMap, hash::Hash, marker::PhantomData, str::FromStr};
+use futures_util::stream::StreamExt;
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Formatter},
+    str::FromStr,
+    sync::Arc,
+};
+
 use InteropCenter::InteropMessage;
 
 sol! {
@@ -76,6 +83,17 @@ struct InteropMessageParsed {
     pub data: Bytes,
 
     pub interop_message: InteropCenter::InteropMessage,
+}
+
+impl Debug for InteropMessageParsed {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InteropMessageParsed")
+            .field("interop_center_sender", &self.interop_center_sender)
+            .field("msg_hash", &self.msg_hash)
+            .field("sender", &self.sender)
+            .field("data", &self.data)
+            .finish()
+    }
 }
 
 impl InteropMessageParsed {
@@ -145,6 +163,7 @@ impl InteropMessageParsed {
     // Checks if the interop message is of type b.
 }
 
+#[derive(Clone)]
 struct InteropChain {
     pub provider: alloy::providers::fillers::FillProvider<
         alloy::providers::fillers::JoinFill<
@@ -168,6 +187,8 @@ struct InteropChain {
     pub rpc: String,
 }
 
+const BLOCKS_IN_THE_PAST: u64 = 1000;
+
 impl InteropChain {
     pub async fn get_aliased_account_address(
         &self,
@@ -184,6 +205,40 @@ impl InteropChain {
             .await
             .unwrap()
             ._0
+    }
+
+    pub async fn listen_on_interop_messages<F>(&self, callback: F)
+    where
+        F: Fn(Log),
+    {
+        let latest_block = self.provider.get_block_number().await.unwrap();
+
+        // Look at last 1k blocks.
+        let filter = Filter::new()
+            .from_block(latest_block.saturating_sub(BLOCKS_IN_THE_PAST))
+            .event_signature(InteropCenter::InteropMessageSent::SIGNATURE_HASH)
+            .address(self.interop_address);
+
+        let logs = self.provider.get_logs(&filter).await.unwrap();
+
+        for log in logs {
+            callback(log);
+        }
+
+        println!("Starting to watch logs...");
+
+        let mut log_stream = self
+            .provider
+            .watch_logs(&filter)
+            .await
+            .unwrap()
+            .into_stream();
+
+        while let Some(log) = log_stream.next().await {
+            for l in log {
+                callback(l);
+            }
+        }
     }
 }
 
@@ -238,11 +293,11 @@ async fn main() -> anyhow::Result<()> {
         let chain_id = provider.get_chain_id().await?;
         let prev = providers_map.insert(
             chain_id,
-            InteropChain {
+            Arc::new(InteropChain {
                 provider,
                 interop_address,
                 rpc: rpc.clone(),
-            },
+            }),
         );
         if let Some(prev) = prev {
             panic!(
@@ -252,9 +307,41 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let mut all_messages = HashMap::new();
+    //let mut all_messages = HashMap::new();
 
-    for (_, entry) in &providers_map {
+    let handles: Vec<_> = providers_map
+        .iter()
+        .map(|(_, entry)| {
+            let entry2 = Arc::clone(&entry);
+            println!("Starting the spawn..");
+            let handle = tokio::task::spawn(async move {
+                entry2
+                    .listen_on_interop_messages(|log| {
+                        let msg = InteropMessageParsed::from_log(&log);
+
+                        println!("Got msg {:?}", msg);
+                    })
+                    .await;
+            });
+            handle
+        })
+        .collect();
+
+    futures::future::join_all(handles).await;
+
+    /*for (_, entry) in providers_map {
+        let entry2 = Arc::clone(&entry);
+        println!("Starting the spawn..");
+        let handle = tokio::task::spawn(async move {
+            entry2
+                .listen_on_interop_messages(|log| {
+                    let msg = InteropMessageParsed::from_log(&log);
+
+                    println!("Got msg {:?}", msg);
+                })
+                .await;
+        });
+        /*
         let latest_block = entry.provider.get_block_number().await.unwrap();
 
         // Look at last 1k blocks.
@@ -294,8 +381,8 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
                 println!("Got receipt: {receipt:#?}");
             }
-        }
-    }
+        }*/
+    }*/
 
     // We have to support 2 things:
     // * for each 'interop message' - 'deliver' it to all the other locations

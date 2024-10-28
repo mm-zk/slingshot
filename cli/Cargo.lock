@@ -1065,6 +1065,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
+ "futures",
+ "futures-util",
  "futures-utils-wasm",
  "k256",
  "rand",
