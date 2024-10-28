@@ -1,16 +1,15 @@
 use alloy::{
-    dyn_abi::{DynSolType, DynSolValue, SolType},
-    hex,
+    dyn_abi::SolType,
+    hex::FromHex,
     network::TransactionBuilder,
-    primitives::{address, Address, Bytes, FixedBytes, B256, U256},
+    primitives::{Address, Bytes, FixedBytes, U256},
     providers::Provider,
     rpc::types::{Filter, Log},
     signers::local::PrivateKeySigner,
     sol_types::{SolCall, SolEvent},
 };
 use alloy_zksync::{
-    network::transaction_request::TransactionRequest,
-    provider::{self, zksync_provider},
+    network::transaction_request::TransactionRequest, provider::zksync_provider,
     wallet::ZksyncWallet,
 };
 use k256::ecdsa::SigningKey;
@@ -26,8 +25,6 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::Mutex;
-
-use InteropCenter::InteropMessage;
 
 sol! {
     #[sol(rpc)]
@@ -201,6 +198,7 @@ pub struct InteropChain {
     pub interop_address: Address,
     pub rpc: String,
     pub chain_id: u64,
+    pub admin_wallet: ZksyncWallet,
 }
 
 const BLOCKS_IN_THE_PAST: u64 = 1000;
@@ -264,15 +262,26 @@ async fn handle_type_a_message(
     providers_map: &HashMap<u64, Arc<InteropChain>>,
 ) {
     // Forward the message to all the other chains.
-    for (_, entry) in providers_map {
-        let contract = InteropCenter::new(entry.interop_address, &entry.provider);
+    for (chain_id, entry) in providers_map {
+        let admin_provider = zksync_provider()
+            .with_recommended_fillers()
+            .wallet(entry.admin_wallet.clone())
+            .on_http(entry.rpc.parse().unwrap());
 
-        // Notify each chain about the message.
-        contract
+        let contract = InteropCenter::new(entry.interop_address, &admin_provider);
+
+        // TODO: before sending, maybe check if the message was forwarded already..
+
+        let tx_hash = contract
             .receiveInteropMessage(msg.msg_hash)
-            .call()
+            .send()
+            .await
+            .unwrap()
+            .watch()
             .await
             .unwrap();
+
+        println!("Forwarded msg to {} with tx {:?}", chain_id, tx_hash);
     }
 }
 
@@ -311,6 +320,9 @@ struct Cli {
     /// List of RPC URL and interop address pairs (e.g. -r URL ADDRESS)
     #[arg(short, long, num_args = 2, value_names = ["URL", "ADDRESS"])]
     rpc: Vec<String>,
+
+    #[arg(long)]
+    private_key: String,
 }
 
 #[tokio::main]
@@ -318,6 +330,17 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     let mut rpc_addresses = Vec::new();
+
+    let private_key = cli
+        .private_key
+        .strip_prefix("0x")
+        .unwrap_or(&cli.private_key);
+
+    let signer: PrivateKeySigner = PrivateKeySigner::from_signing_key(
+        // private key from account 7.
+        SigningKey::from_bytes(Vec::from_hex(private_key).unwrap().as_slice().into()).unwrap(),
+    );
+    let admin_wallet = ZksyncWallet::from(signer);
 
     // Process URL-address pairs
     for chunk in cli.rpc.chunks(2) {
@@ -347,6 +370,7 @@ async fn main() -> anyhow::Result<()> {
                 interop_address,
                 rpc: rpc.clone(),
                 chain_id,
+                admin_wallet: admin_wallet.clone(),
             }),
         );
         if let Some(prev) = prev {
@@ -404,71 +428,5 @@ async fn main() -> anyhow::Result<()> {
     // * for each 'interop message' - 'deliver' it to all the other locations
     // * for each 'type C' message - detect, create a payload and send.
 
-    /*
-    let signer: PrivateKeySigner = PrivateKeySigner::from_signing_key(
-        // private key from account 7.
-        SigningKey::from_bytes(
-            &hex!("4d91647d0a8429ac4433c83254fb9625332693c848e578062fe96362f32bfe91").into(),
-        )
-        .unwrap(),
-    );
-
-    if false {
-        let wallet = ZksyncWallet::from(signer);
-
-        // Create a provider with the wallet.
-        let provider = zksync_provider()
-            .with_recommended_fillers()
-            .wallet(wallet)
-            .on_http("http://localhost:8011".parse().unwrap());
-
-        // Build a transaction to send 100 wei from Alice to Vitalik.
-        // The `from` field is automatically filled to the first signer's address (Alice).
-        let tx = TransactionRequest::default()
-            .with_to(address!("d8dA6BF26964aF9D7eEd9e03E53415D37aA96045"))
-            .with_value(U256::from(100))
-            .with_from(address!("42F3dc38Da81e984B92A95CBdAAA5fA2bd5cb1Ba"));
-
-        // Send the transaction and wait for inclusion.
-        let receipt = provider.send_transaction(tx).await?.get_receipt().await?;
-        println!("Got receipt: {receipt:#?}");
-    }
-
-    if false {
-        let other_provider = zksync_provider()
-            .with_recommended_fillers()
-            .on_http("http://localhost:8011".parse().unwrap());
-
-        // Build a transaction to send 100 wei from Alice to Vitalik.
-        // The `from` field is automatically filled to the first signer's address (Alice).
-        let mut tx = TransactionRequest::default()
-            .with_to(address!("d8dA6BF26964aF9D7eEd9e03E53415D37aA96045"))
-            .with_value(U256::from(100))
-            .with_gas_limit(10_000_000)
-            .with_gas_per_pubdata(U256::from(50_000))
-            .with_max_fee_per_gas(100_000_000)
-            .with_max_priority_fee_per_gas(100_000_000)
-            .with_from(address!("7e24c9C86368159be470008a0F0d5df28612ca2b"));
-
-        println!("{:?}", tx.output_tx_type());
-
-        //let mut foo = tx.clone();
-
-        TransactionBuilder::prep_for_submission(&mut tx);
-
-        // Send the transaction and wait for inclusion.
-        let receipt = other_provider
-            .send_transaction(tx)
-            .await?
-            .get_receipt()
-            .await?;
-        println!("Got second receipt: {receipt:#?}");
-    }
-
-    // Call `zks` namespace RPC.
-    //let l1_chain_id = provider.get_l1_chain_id().await?;
-    // println!("L1 chain ID is: {l1_chain_id}");
-
-    */
     Ok(())
 }
