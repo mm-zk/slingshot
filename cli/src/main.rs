@@ -1,4 +1,5 @@
 use alloy::{
+    dyn_abi::{DynSolType, DynSolValue, SolType},
     hex,
     network::TransactionBuilder,
     primitives::{address, Address, Bytes, FixedBytes, B256, U256},
@@ -26,6 +27,14 @@ sol! {
             address indexed sender,
             bytes payload
         );
+
+
+        struct InteropMessage {
+            bytes data;
+            address sender;
+            uint256 sourceChainId;
+            uint256 messageNum;
+        }
     }
 }
 
@@ -38,20 +47,29 @@ struct InteropMessageParsed {
 
     // 'data' field from the Log (it contains the InteropMessage).
     pub data: Bytes,
+
+    pub interop_message: InteropCenter::InteropMessage,
 }
 
 impl InteropMessageParsed {
     pub fn from_log(log: &Log) -> Self {
+        let interop_message =
+            InteropCenter::InteropMessage::abi_decode(&log.data().data.slice(64..), true).unwrap();
+
         InteropMessageParsed {
             interop_center_sender: log.address(),
             msg_hash: log.topics()[1],
             sender: Address::from_slice(&log.topics()[2].0[12..]),
             data: log.data().data.clone(),
+            interop_message,
         }
     }
 
     pub fn is_type_b(&self) -> bool {
-        return self.interop_center_sender == self.sender;
+        return self.interop_center_sender == self.sender && self.interop_message.data[0] == 1;
+    }
+    pub fn is_type_c(&self) -> bool {
+        return self.interop_center_sender == self.sender && self.interop_message.data[0] == 2;
     }
 
     // Checks if the interop message is of type b.
@@ -148,6 +166,8 @@ async fn main() -> anyhow::Result<()> {
         for m in msgs {
             let is_type_b = m.is_type_b();
             dbg!(is_type_b);
+            let is_type_c = m.is_type_c();
+            dbg!(is_type_c);
         }
     }
 

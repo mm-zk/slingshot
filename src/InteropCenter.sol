@@ -221,6 +221,14 @@ contract InteropCenter {
         trustedSources[sourceChainId] = trustedSender;
     }
 
+    // Gets aliased account that is controlled by source account on the current chain id.
+    function getAliasedAccount(address sourceAccount) public returns (address) {
+        bytes32 salt = keccak256(
+            abi.encodePacked(block.chainid, sourceAccount)
+        );
+        return _getZKSyncCreate2Address(salt);
+    }
+
     function executeInteropBundle(
         InteropMessage memory message,
         bytes memory proof
@@ -373,6 +381,7 @@ contract InteropCenter {
         address sourceChainSender;
         uint256 destinationChain;
         uint256 gasLimit;
+        uint256 gasPrice;
         uint256 value;
         bytes32 bundleHash;
         bytes32 feesBundleHash;
@@ -382,9 +391,9 @@ contract InteropCenter {
 
     // Function to send interop transaction
     function sendInteropTransaction(
-        address sourceChainSender,
         uint256 destinationChain,
         uint256 gasLimit,
+        uint256 gasPrice,
         uint256 value,
         bytes32 bundleHash,
         bytes32 feesBundleHash,
@@ -393,9 +402,10 @@ contract InteropCenter {
     ) external returns (bytes32) {
         // Create the InteropTransaction struct
         InteropTransaction memory transaction = InteropTransaction({
-            sourceChainSender: sourceChainSender,
+            sourceChainSender: msg.sender,
             destinationChain: destinationChain,
             gasLimit: gasLimit,
+            gasPrice: gasPrice,
             value: value,
             bundleHash: bundleHash,
             feesBundleHash: feesBundleHash,
