@@ -12,6 +12,9 @@ import {IContractDeployer} from "../lib/era-contracts/system-contracts/contracts
 import {SystemContractsCaller} from "../lib/era-contracts/system-contracts/contracts/libraries/SystemContractsCaller.sol";
 
 contract InteropCenter {
+    bytes1 constant BUNDLE_PREFIX = 0x01;
+    bytes1 constant TRANSACTION_PREFIX = 0x02;
+
     uint256 public interopMessagesSent;
     address public owner;
 
@@ -168,7 +171,10 @@ contract InteropCenter {
         });
 
         // Serialize the bundle data
-        bytes memory serializedData = abi.encode(fullBundle);
+        bytes memory serializedData = abi.encodePacked(
+            InteropCenter.BUNDLE_PREFIX,
+            abi.encode(fullBundle)
+        );
 
         // Send the serialized data via interop message
         bytes32 msgHash = InteropCenter(address(this)).sendInteropMessage(
@@ -188,8 +194,6 @@ contract InteropCenter {
         bytes calldata payload,
         uint256 value
     ) public returns (bytes32) {
-        console2.log("Inside sendCall for", address(this));
-        console2.log("sender is", msg.sender);
         // Step 1: Start a new bundle
         uint256 bundleId = startBundle(destinationChain);
 
@@ -234,7 +238,18 @@ contract InteropCenter {
         );
 
         // Deserialize the InteropBundle from message data
-        InteropBundle memory bundle = abi.decode(message.data, (InteropBundle));
+        bytes1 prefix = message.data[0];
+        require(
+            prefix == InteropCenter.BUNDLE_PREFIX,
+            "Wrong prefix - expected bundle prefix"
+        );
+
+        bytes memory data = message.data;
+        assembly {
+            // Add 1 to skip the first byte and directly decode the rest
+            data := add(data, 0x1)
+        }
+        InteropBundle memory bundle = abi.decode(data, (InteropBundle));
         require(bundle.destinationChain == block.chainid, "wrong chain id");
 
         for (uint256 i = 0; i < bundle.calls.length; i++) {
@@ -323,13 +338,6 @@ contract InteropCenter {
     function _getZKSyncCreate2Address(
         bytes32 salt
     ) internal view returns (address) {
-        console2.log("Elements");
-        console2.logBytes32(keccak256("zksyncCreate2"));
-        console2.logBytes32(bytes32(uint256(uint160(address(this)))));
-        console2.logBytes32(salt);
-        console2.logBytes32(keccak256(type(InteropAccount).creationCode));
-        console2.logBytes32(keccak256(""));
-        console2.log("done");
         return
             address(
                 uint160(
@@ -357,6 +365,55 @@ contract InteropCenter {
             size := extcodesize(addr)
         }
         return size > 0;
+    }
+
+    // Transactions
+
+    struct InteropTransaction {
+        address sourceChainSender;
+        uint256 destinationChain;
+        uint256 gasLimit;
+        uint256 value;
+        bytes32 bundleHash;
+        bytes32 feesBundleHash;
+        address destinationPaymaster;
+        bytes destinationPaymasterInput;
+    }
+
+    // Function to send interop transaction
+    function sendInteropTransaction(
+        address sourceChainSender,
+        uint256 destinationChain,
+        uint256 gasLimit,
+        uint256 value,
+        bytes32 bundleHash,
+        bytes32 feesBundleHash,
+        address destinationPaymaster,
+        bytes calldata destinationPaymasterInput
+    ) external returns (bytes32) {
+        // Create the InteropTransaction struct
+        InteropTransaction memory transaction = InteropTransaction({
+            sourceChainSender: sourceChainSender,
+            destinationChain: destinationChain,
+            gasLimit: gasLimit,
+            value: value,
+            bundleHash: bundleHash,
+            feesBundleHash: feesBundleHash,
+            destinationPaymaster: destinationPaymaster,
+            destinationPaymasterInput: destinationPaymasterInput
+        });
+
+        // Serialize the struct
+        bytes memory serializedTransaction = abi.encodePacked(
+            InteropCenter.TRANSACTION_PREFIX,
+            abi.encode(transaction)
+        );
+
+        bytes32 msgHash = InteropCenter(address(this)).sendInteropMessage(
+            serializedTransaction
+        );
+
+        return msgHash;
     }
 }
 
