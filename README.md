@@ -7,11 +7,19 @@ forge script script/DeployBeaconProxy.s.sol:DeployBeaconProxy --rpc-url http://l
 
 ## Plan
 
-[x] - Type A (InteropMessage)
-[x] - Type B messeging
-[] - Type C messeging
 
-[] - Example 'bridge'
+[x] - Type A (InteropMessage)
+
+[x] - Type B messaging
+
+[x] - Type C messaging
+
+
+[] - authorization verification in AA
+
+[] - Example 'bridge' with assets movement
+
+[] - split script into 2 parts and run with 2 era test nodes.
 
 
 ## Execution info

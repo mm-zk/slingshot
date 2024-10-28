@@ -6,10 +6,11 @@ use alloy::{
     providers::Provider,
     rpc::types::{Filter, Log},
     signers::local::PrivateKeySigner,
-    sol_types::SolEvent,
+    sol_types::{SolCall, SolEvent},
 };
 use alloy_zksync::{
-    network::transaction_request::TransactionRequest, provider::zksync_provider,
+    network::transaction_request::TransactionRequest,
+    provider::{self, zksync_provider},
     wallet::ZksyncWallet,
 };
 use k256::ecdsa::SigningKey;
@@ -17,7 +18,8 @@ use k256::ecdsa::SigningKey;
 use alloy::sol;
 
 use clap::Parser;
-use std::{collections::HashMap, marker::PhantomData, str::FromStr};
+use std::{collections::HashMap, hash::Hash, marker::PhantomData, str::FromStr};
+use InteropCenter::InteropMessage;
 
 sol! {
     #[sol(rpc)]
@@ -35,6 +37,31 @@ sol! {
             uint256 sourceChainId;
             uint256 messageNum;
         }
+
+        struct InteropTransaction {
+            address sourceChainSender;
+            uint256 destinationChain;
+            uint256 gasLimit;
+            uint256 gasPrice;
+            uint256 value;
+            bytes32 bundleHash;
+            bytes32 feesBundleHash;
+            address destinationPaymaster;
+            bytes destinationPaymasterInput;
+        }
+
+        function getAliasedAccount(
+            address sourceAccount,
+            uint256 sourceChainId
+        ) public returns (address);
+
+
+        function executeInteropBundle(
+            InteropMessage memory message,
+            bytes memory proof
+        ) public ;
+
+
     }
 }
 
@@ -72,13 +99,92 @@ impl InteropMessageParsed {
         return self.interop_center_sender == self.sender && self.interop_message.data[0] == 2;
     }
 
+    pub async fn create_transaction_request(
+        &self,
+        providers_map: &HashMap<u64, InteropChain>,
+        all_messages: &HashMap<FixedBytes<32>, InteropMessage>,
+    ) -> TransactionRequest {
+        let interop_tx =
+            InteropCenter::InteropTransaction::abi_decode(&self.interop_message.data[1..], true)
+                .unwrap();
+
+        println!("interop tx desxtination: {}", interop_tx.destinationChain);
+        let destination_interop_chain = providers_map
+            .get(&interop_tx.destinationChain.try_into().unwrap())
+            .unwrap();
+
+        let from_addr = destination_interop_chain
+            .get_aliased_account_address(
+                // TODO: Or provided from the RPC??
+                self.interop_message.sourceChainId,
+                interop_tx.sourceChainSender,
+            )
+            .await;
+
+        println!("Got 'from' address set to: {:?}", from_addr);
+
+        let bundle_msg = all_messages.get(&interop_tx.bundleHash).unwrap();
+
+        let proof = Bytes::new();
+
+        let calldata = InteropCenter::executeInteropBundleCall::new((bundle_msg.clone(), proof));
+
+        // TODO: add calldata too.
+
+        TransactionRequest::default()
+            .with_call(&calldata)
+            .with_to(destination_interop_chain.interop_address)
+            .with_value(interop_tx.value)
+            .with_gas_limit(interop_tx.gasLimit.try_into().unwrap())
+            .with_gas_per_pubdata(U256::from(50_000))
+            .with_max_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
+            .with_max_priority_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
+            .with_from(from_addr)
+    }
+
     // Checks if the interop message is of type b.
 }
 
-struct InteropChain<P> {
-    pub provider: P,
+struct InteropChain {
+    pub provider: alloy::providers::fillers::FillProvider<
+        alloy::providers::fillers::JoinFill<
+            alloy::providers::Identity,
+            alloy::providers::fillers::JoinFill<
+                alloy_zksync::provider::fillers::Eip712FeeFiller,
+                alloy::providers::fillers::JoinFill<
+                    alloy::providers::fillers::NonceFiller,
+                    alloy::providers::fillers::ChainIdFiller,
+                >,
+            >,
+        >,
+        alloy::providers::RootProvider<
+            alloy::transports::http::Http<reqwest::Client>,
+            alloy_zksync::network::Zksync,
+        >,
+        alloy::transports::http::Http<reqwest::Client>,
+        alloy_zksync::network::Zksync,
+    >,
     pub interop_address: Address,
     pub rpc: String,
+}
+
+impl InteropChain {
+    pub async fn get_aliased_account_address(
+        &self,
+        source_chain: U256,
+        source_address: Address,
+    ) -> Address {
+        println!("Calling {:?}", self.interop_address);
+        println!("params {:?} {:?}", source_address, source_chain);
+
+        let contract = InteropCenter::new(self.interop_address, &self.provider);
+        contract
+            .getAliasedAccount(source_address, source_chain)
+            .call()
+            .await
+            .unwrap()
+            ._0
+    }
 }
 
 /*
@@ -146,7 +252,9 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    for (_, entry) in providers_map {
+    let mut all_messages = HashMap::new();
+
+    for (_, entry) in &providers_map {
         let latest_block = entry.provider.get_block_number().await.unwrap();
 
         // Look at last 1k blocks.
@@ -161,6 +269,10 @@ async fn main() -> anyhow::Result<()> {
             .map(|l| InteropMessageParsed::from_log(l))
             .collect();
 
+        for m in &msgs {
+            all_messages.insert(m.msg_hash, m.interop_message.clone());
+        }
+
         println!("Got {} msgs", msgs.len());
 
         for m in msgs {
@@ -168,6 +280,20 @@ async fn main() -> anyhow::Result<()> {
             dbg!(is_type_b);
             let is_type_c = m.is_type_c();
             dbg!(is_type_c);
+
+            if is_type_c {
+                let tx = m
+                    .create_transaction_request(&providers_map, &all_messages)
+                    .await;
+
+                let receipt = entry
+                    .provider
+                    .send_transaction(tx)
+                    .await?
+                    .get_receipt()
+                    .await?;
+                println!("Got receipt: {receipt:#?}");
+            }
         }
     }
 

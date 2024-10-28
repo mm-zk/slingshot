@@ -222,11 +222,56 @@ contract InteropCenter {
     }
 
     // Gets aliased account that is controlled by source account on the current chain id.
-    function getAliasedAccount(address sourceAccount) public returns (address) {
+    function getAliasedAccount(
+        address sourceAccount,
+        uint256 sourceChainId
+    ) public returns (address) {
         bytes32 salt = keccak256(
-            abi.encodePacked(block.chainid, sourceAccount)
+            abi.encodePacked(sourceChainId, sourceAccount)
         );
         return _getZKSyncCreate2Address(salt);
+    }
+
+    function deployAliasedAccount(
+        address sourceAccount,
+        uint256 sourceChainId
+    ) public returns (address) {
+        address accountAddress = getAliasedAccount(
+            sourceAccount,
+            sourceChainId
+        );
+        if (!isContract(accountAddress)) {
+            console2.log(
+                "aliased account missing - deploy new one",
+                accountAddress
+            );
+            bytes32 salt = keccak256(
+                abi.encodePacked(sourceChainId, sourceAccount)
+            );
+
+            address payable contractDeployer = payable(
+                0x0000000000000000000000000000000000008006
+            );
+            bytes32 bytecodeHash = getZKSyncBytecodeHash(
+                type(InteropAccount).creationCode
+            );
+
+            SystemContractsCaller.systemCallWithPropagatedRevert(
+                uint32(gasleft()),
+                contractDeployer,
+                0,
+                abi.encodeCall(
+                    IContractDeployer.create2Account,
+                    (
+                        salt,
+                        bytecodeHash,
+                        "",
+                        IContractDeployer.AccountAbstractionVersion.Version1
+                    )
+                )
+            );
+        }
+        return accountAddress;
     }
 
     function executeInteropBundle(
@@ -400,6 +445,7 @@ contract InteropCenter {
         address destinationPaymaster,
         bytes calldata destinationPaymasterInput
     ) external returns (bytes32) {
+        console2.log("Sending interoptx with sender", msg.sender);
         // Create the InteropTransaction struct
         InteropTransaction memory transaction = InteropTransaction({
             sourceChainSender: msg.sender,

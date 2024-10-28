@@ -218,10 +218,13 @@ contract InteropE2ETx is Script {
 
         // Now create the transaction
 
+        console2.log("whoami", address(this));
+        console2.log("who called", msg.sender);
+
         bytes32 txMsgHash = interopCenter.sendInteropTransaction(
             260,
             10000000, // gas limit
-            10000000, // gas price
+            1000000000, // gas price
             0, // value
             sentMsgHash, // bundle hash
             bytes32(0), // feed bundle
@@ -230,6 +233,18 @@ contract InteropE2ETx is Script {
         );
         console2.log("interopCenter Tx sent");
         console2.logBytes32(txMsgHash);
+
+        address payable aliased = payable(
+            interopCenter.deployAliasedAccount(msg.sender, block.chainid)
+        );
+        console2.log("Aliased: ", aliased);
+        console2.log("Based off ", msg.sender);
+        console2.log("chain ", block.chainid);
+
+        (bool success, ) = aliased.call{value: 500000}("");
+        require(success, "Call failed");
+
+        console2.log("Balance is", aliased.balance);
 
         // Step 5: Capture the InteropMessageSent event to retrieve msgHash and payload
         vm.stopBroadcast();
@@ -259,10 +274,12 @@ contract InteropE2ETx is Script {
         // Decode the serialized InteropMessage from the event payload
 
         // Step 6: Execute the InteropBundle on the InteropCenter
-        //InteropCenter.InteropMessage memory interopMessage = abi.decode(
-        //    eventPayload,
-        //    (InteropCenter.InteropMessage)
-        //);
+        InteropCenter.InteropMessage memory interopMessage = abi.decode(
+            eventPayload,
+            (InteropCenter.InteropMessage)
+        );
+
+        // tricky -- we want to 'send it as transaction' from the outside..
 
         //interopCenter.executeInteropBundle(interopMessage, "0x"); // Pass an empty proof for simplicity
 
@@ -271,6 +288,6 @@ contract InteropE2ETx is Script {
 
         //console.log(greeter.getGreeting());
 
-        //vm.stopBroadcast();
+        vm.stopBroadcast();
     }
 }
