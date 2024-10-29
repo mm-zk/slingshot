@@ -233,7 +233,8 @@ impl InteropMessageParsed {
             TransactionRequest::default()
                 .with_call(&calldata)
                 .with_to(destination_interop_chain.interop_address)
-                .with_value(interop_tx.value)
+                // FIXME: no value passing.
+                //.with_value(interop_tx.value)
                 .with_gas_limit(interop_tx.gasLimit.try_into().unwrap())
                 .with_gas_per_pubdata(U256::from(50_000))
                 .with_max_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
