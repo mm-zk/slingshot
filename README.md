@@ -45,6 +45,14 @@ forge script script/Interop.s.sol:InteropE2E --rpc-url http://localhost:8011 --p
 
 ## Setup
 
+**IMPORTANT**
+
+Please use era-test-node from https://github.com/matter-labs/era-test-node/tree/mmzk_1019_for_slingshot branch.
+
+for alloy-zksync: the latest from https://github.com/popzxc/alloy-zksync 
+
+
+
 Start 2 era test nodes and deploy the interop center to both.
 
 ```shell
