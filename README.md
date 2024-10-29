@@ -87,12 +87,21 @@ Creating 'type C' interop transaction (that would send over 100 value to empty a
 cast send -r http://localhost:8012 0xTHIS_IS_INTEROP_ADDRESS "requestInteropMinimal(uint256, address, bytes, uint256, uint256, uint256)" 501 0x8B912Dfa4Db5f44FB5B6c8A2BA8925f01DA322EE 0x 100 10000000 1000000000  --private-key 0x7becc4a46e0c3b512d380ca73a4c868f790d1055a7698f38fb3ca2b2ac97efbb
 ```
 
-then you can check (on the 8013 - so other chain)
 ```
-cast balance -r http://localhost:8013 0x8B912Dfa4Db5f44FB5B6c8A2BA8925f01DA322EE
+# this should return empty.
+cast call -r http://localhost:8013 GREETER_ADDRESS "greeting()(string)"
+
+cast calldata "setGreeting(string)" hello
+
+> 0xa41368620000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000
+
+cast send -r http://localhost:8012 0xTHIS_IS_INTEROP_ADDRESS "requestInteropMinimal(uint256, address, bytes, uint256, uint256, uint256)" 501 GREETER_ON_DESTINATION_CHAIN 0xa41368620000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000 0 10000000 1000000000  --private-key 0x7becc4a46e0c3b512d380ca73a4c868f790d1055a7698f38fb3ca2b2ac97efbb
+
+# this should return hello
+cast call -r http://localhost:8013 GREETER_ADDRESS "greeting()(string)"
 ```
 
-and it should show 100.
+
 
 
 ### Log
