@@ -514,7 +514,7 @@ contract InteropAccount is IAccount {
     // Execute function to forward interop call
     function executeInteropCall(
         InteropCenter.InteropCall calldata interopCall
-    ) external payable {
+    ) external {
         require(msg.sender == trustedInteropCenter, "Untrusted interop center");
         console2.log("Inside aliased account", address(this));
         console2.log("destination", interopCall.destinationAddress);
@@ -558,10 +558,6 @@ contract InteropAccount is IAccount {
         console2.log("inside execute tx to:", to);
         uint128 value = Utils.safeCastToU128(_transaction.value);
         bytes calldata data = _transaction.data;
-        console2.log("Selector");
-        //console2.logBytes4(bytes32(data[:32]));
-        console2.log("gas", gasleft());
-        console2.log("value", value);
 
         uint32 gas = Utils.safeCastToU32(gasleft());
 

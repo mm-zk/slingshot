@@ -6,6 +6,7 @@ import {Vm} from "../lib/forge-std/src/Vm.sol";
 import {InteropCenter} from "../src/InteropCenter.sol";
 import "../src/Greeter.sol";
 import "../lib/forge-std/src/console2.sol";
+import {Transaction, TransactionHelper} from "../lib/era-contracts/system-contracts/contracts/libraries/TransactionHelper.sol";
 
 contract InteropScript is Script {
     InteropCenter public interopCenter;
@@ -279,6 +280,12 @@ contract InteropE2ETx is Script {
             (InteropCenter.InteropMessage)
         );
 
+        /*IAccount(aliased).validateTransaction(
+            bytes32(0),
+            bytes32(0),
+            _transaction
+        );*/
+
         // tricky -- we want to 'send it as transaction' from the outside..
 
         //interopCenter.executeInteropBundle(interopMessage, "0x"); // Pass an empty proof for simplicity
@@ -290,4 +297,51 @@ contract InteropE2ETx is Script {
 
         vm.stopBroadcast();
     }
+
+    //bytes data;
+    //address sender;
+    //uint256 sourceChainId;
+    //uint256 messageNum;
+
+    /*
+    function transaction_to_interop(
+        Transaction memory transaction
+    ) public returns (InteropCenter.InteropMessage memory) {
+
+        InteropCenter.InteropTransaction memory immediate = InteropCenter.InteropTransaction({
+            sourceChainSender: address(uint160(tx.from)),
+            destinationChain: 1, // Adjust as needed for destination chain
+            gasLimit: tx.gasLimit,
+            value: tx.value,
+            bundleHash: keccak256(abi.encodePacked(tx.data)), // Use data as part of bundle hash
+            feesBundleHash: keccak256(abi.encodePacked(tx.signature)), // Use signature as part of fees bundle hash
+            destinationPaymaster: address(uint160(tx.paymaster)),
+            destinationPaymasterInput: tx.paymasterInput
+
+        });
+
+    }
+
+    function interop_to_transaction(
+        InteropCenter.InteropMessage memory message
+    ) public returns (Transaction memory) {
+        bytes1 prefix = message.data[0];
+        require(prefix == 0x02, "Wrong prefix - expected transaction prefix");
+
+        bytes memory data = message.data;
+        assembly {
+            // Add 1 to skip the first byte and directly decode the rest
+            data := add(data, 0x1)
+        }
+
+        InteropCenter.InteropTransaction memory immediate = abi.decode(
+            data,
+            (InteropCenter.InteropTransaction)
+        );
+        Transaction memory txn = Transaction ({
+
+
+        });
+        return txn
+    }*/
 }
