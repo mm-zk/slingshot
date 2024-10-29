@@ -499,6 +499,18 @@ contract InteropCenter {
                 new bytes(0)
             );
     }
+
+    // helper stuff.
+
+    // Paymasters on different chains (including current one)
+    mapping(uint256 => address) public preferredPaymasters;
+
+    function setPreferredPaymaster(
+        uint256 chainId,
+        address paymaster
+    ) public onlyOwner {
+        preferredPaymasters[chainId] = paymaster;
+    }
 }
 
 contract InteropAccount is IAccount {

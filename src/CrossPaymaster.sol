@@ -7,11 +7,14 @@ import "../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {IPaymaster, ExecutionResult, PAYMASTER_VALIDATION_SUCCESS_MAGIC} from "../lib/era-contracts/system-contracts/contracts/interfaces/IPaymaster.sol";
 import {Transaction, TransactionHelper} from "../lib/era-contracts/system-contracts/contracts/libraries/TransactionHelper.sol";
+import {PaymasterToken} from "../src/PaymasterToken.sol";
 
 contract CrossPaymaster is IPaymaster {
     using TransactionHelper for *;
 
-    constructor() payable {}
+    address public paymasterTokenAddress;
+
+    constructor(address _paymasterTokenAddress) payable {}
 
     function validateAndPayForPaymasterTransaction(
         bytes32 _txHash,

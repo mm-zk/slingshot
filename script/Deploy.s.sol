@@ -30,11 +30,17 @@ contract Deploy is Script {
         paymasterToken = new PaymasterToken();
         console2.log("Deployed Paymaster token at:", address(paymasterToken));
 
-        crossPaymaster = new CrossPaymaster();
+        crossPaymaster = new CrossPaymaster(address(paymasterToken));
         console2.log("Deployed Paymaster  at:", address(crossPaymaster));
 
         greeter = new Greeter();
         console2.log("Deployed greeter at:", address(greeter));
+
+        // register preferred local paymaster.
+        interopCenter.setPreferredPaymaster(
+            block.chainid,
+            address(crossPaymaster)
+        );
 
         address payable paymasterPayable = payable(address(crossPaymaster));
 

@@ -87,7 +87,11 @@ cast send -r http://localhost:8012 0xb03b0432524bF54dDefBC38033eEe3D8b6b154C4 "r
 * Checked that alloy-zksync is supporting it (needed some small changes).
 * Changed the deploy script to deploy the paymaster and paymaster tokens.
 
+* rust code is fetching paymaster address from interop now.
+* paymaster sees the paymaster tokens (but don't use them yet.)
+* rust now refills the paymaster (not Aliased accounts anymore)
 
 Next steps:
-* get the rust code to fetch paymaster (somehow) automatically - probably through interop.
-* connect paymaster and paymaster tokens.
+* rust to 'share' the paymaster addresses - so that they can be 'encoded' directly on sending into the transactions
+* paymaster to actually take the token (1 for now).
+* add nullifiers (at the end)

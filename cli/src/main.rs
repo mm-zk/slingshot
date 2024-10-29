@@ -79,6 +79,9 @@ sol! {
             address sourceAccount,
             uint256 sourceChainId
         ) public returns (address);
+
+        mapping(uint256 => address) public preferredPaymasters;
+
     }
 }
 
@@ -190,12 +193,21 @@ impl InteropMessageParsed {
             );
         }
 
+        // TODO: take this from the interop_tx instead.
+        let paymaster_params = PaymasterParams {
+            paymaster: destination_interop_chain.get_preferred_paymaster().await,
+            paymaster_input: Bytes::from_hex("0x1234").unwrap(),
+        };
+        let paymaster = paymaster_params.paymaster;
+        println!("Using paymaster: {}", paymaster);
+
         let balance = destination_interop_chain
             .provider
-            .get_balance(from_addr)
+            .get_balance(paymaster)
             .await
             .unwrap();
 
+        // Refill the paymaster if needed.
         let mut limit: U256 = 1_000_000.try_into().unwrap();
         limit = limit.checked_mul(1_000_000.try_into().unwrap()).unwrap();
         limit = limit.checked_mul(1_000_000.try_into().unwrap()).unwrap();
@@ -206,7 +218,7 @@ impl InteropMessageParsed {
                 .wallet(destination_interop_chain.admin_wallet.clone())
                 .on_http(destination_interop_chain.rpc.parse().unwrap());
             let tx = TransactionRequest::default()
-                .with_to(from_addr)
+                .with_to(paymaster)
                 .with_value(limit);
             let tx_hash = admin_provider
                 .send_transaction(tx)
@@ -228,12 +240,6 @@ impl InteropMessageParsed {
             bundle_msg.interop_message.clone(),
             proof,
         ));
-
-        let paymaster_params = PaymasterParams {
-            // TODO: fetch from interop contract
-            paymaster: address!("04FaEd9dCb8d7731d89fe94eb3cc8a29E0e10204"),
-            paymaster_input: Bytes::from_hex("0x1234").unwrap(),
-        };
 
         let tx = TransactionRequest::default()
             .with_call(&calldata)
@@ -293,6 +299,16 @@ impl InteropChain {
         let contract = InteropCenter::new(self.interop_address, &self.provider);
         contract
             .getAliasedAccount(source_address, source_chain)
+            .call()
+            .await
+            .unwrap()
+            ._0
+    }
+
+    pub async fn get_preferred_paymaster(&self) -> Address {
+        let contract = InteropCenter::new(self.interop_address, &self.provider);
+        contract
+            .preferredPaymasters(self.chain_id.try_into().unwrap())
             .call()
             .await
             .unwrap()
