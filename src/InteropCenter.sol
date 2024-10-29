@@ -607,9 +607,7 @@ contract InteropAccount is IAccount {
         bytes32 _txHash,
         bytes32 _possibleSignedHash,
         Transaction calldata _transaction
-    ) external payable {
-        revert();
-    }
+    ) external payable {}
 
     modifier ignoreNonBootloader() {
         if (msg.sender != BOOTLOADER_FORMAL_ADDRESS) {

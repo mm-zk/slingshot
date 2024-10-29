@@ -33,5 +33,11 @@ contract CrossPaymaster is IPaymaster {
         uint256 _maxRefundedGas
     ) external payable {}
 
-    receive() external payable {}
+    receive() external payable {
+        console2.log("inside receive");
+    }
+
+    fallback() external payable {
+        console2.log("inside fallback");
+    }
 }

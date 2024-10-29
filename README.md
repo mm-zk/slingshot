@@ -79,3 +79,15 @@ Creating 'type C' interop transaction (that would send over 100 value to empty a
 ```
 cast send -r http://localhost:8012 0xb03b0432524bF54dDefBC38033eEe3D8b6b154C4 "requestInteropMinimal(uint256, address, bytes, uint256, uint256, uint256)" 501 0x8B912Dfa4Db5f44FB5B6c8A2BA8925f01DA322EE 0x 100 10000000 1000000000  --private-key 0x7becc4a46e0c3b512d380ca73a4c868f790d1055a7698f38fb3ca2b2ac97efbb
 ```
+
+
+### Log
+
+* Added basic paymaster - that accepts everything for now.
+* Checked that alloy-zksync is supporting it (needed some small changes).
+* Changed the deploy script to deploy the paymaster and paymaster tokens.
+
+
+Next steps:
+* get the rust code to fetch paymaster (somehow) automatically - probably through interop.
+* connect paymaster and paymaster tokens.

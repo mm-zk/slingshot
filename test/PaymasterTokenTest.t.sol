@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import {Script, console} from "../lib/forge-std/src/Script.sol";
-import {Vm} from "../lib/forge-std/src/Vm.sol";
 import {InteropCenter} from "../src/InteropCenter.sol";
 import {PaymasterToken} from "../src/PaymasterToken.sol";
 import {CrossPaymaster} from "../src/CrossPaymaster.sol";
@@ -12,7 +10,10 @@ import "../src/Greeter.sol";
 import "../lib/forge-std/src/console2.sol";
 import {Transaction, TransactionHelper} from "../lib/era-contracts/system-contracts/contracts/libraries/TransactionHelper.sol";
 
-contract PaymasterScript is Script {
+import {Test, console} from "../lib/forge-std/src/Test.sol";
+import {TestExt} from "../lib/forge-zksync-std/src/TestExt.sol";
+
+contract PaymasterScript is Test, TestExt {
     InteropCenter public interopCenter;
     PaymasterToken public paymasterToken;
     CrossPaymaster public crossPaymaster;
@@ -21,9 +22,7 @@ contract PaymasterScript is Script {
 
     function setUp() public {}
 
-    function run() public {
-        vm.startBroadcast();
-
+    function test_Simple() public {
         interopCenter = new InteropCenter();
         console2.log("Deployed InteropCenter at:", address(interopCenter));
 
@@ -39,17 +38,14 @@ contract PaymasterScript is Script {
         greeter.setGreeting("Hello - first direct");
 
         console2.log(greeter.getGreeting());
-        vm.stopBroadcast();
-
-        vm.prank(0xB1bB911f481388F8704BF3a3Bdc1D9b186e86037);
 
         bytes memory paymaster_encoded_input = abi.encodeWithSelector(
             bytes4(keccak256("general(bytes)")),
             bytes("0x")
         );
-        vm.zkUsePaymaster(address(crossPaymaster), paymaster_encoded_input);
+        vmExt.zkUsePaymaster(address(crossPaymaster), paymaster_encoded_input);
 
-        vm.greeter.setGreeting("Hello - second");
+        greeter.setGreeting("Hello - first paymaster");
 
         console2.log(greeter.getGreeting());
     }

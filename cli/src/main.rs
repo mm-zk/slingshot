@@ -2,14 +2,15 @@ use alloy::{
     dyn_abi::SolType,
     hex::FromHex,
     network::TransactionBuilder,
-    primitives::{Address, Bytes, FixedBytes, U256},
+    primitives::{address, Address, Bytes, FixedBytes, U256},
     providers::Provider,
     rpc::types::{Filter, Log},
     signers::local::PrivateKeySigner,
     sol_types::{SolCall, SolEvent},
 };
 use alloy_zksync::{
-    network::transaction_request::TransactionRequest, provider::zksync_provider,
+    network::{transaction_request::TransactionRequest, unsigned_tx::eip712::PaymasterParams},
+    provider::zksync_provider,
     wallet::ZksyncWallet,
 };
 use k256::ecdsa::SigningKey;
@@ -228,19 +229,25 @@ impl InteropMessageParsed {
             proof,
         ));
 
-        (
-            destination_chain_id,
-            TransactionRequest::default()
-                .with_call(&calldata)
-                .with_to(destination_interop_chain.interop_address)
-                // FIXME: no value passing.
-                //.with_value(interop_tx.value)
-                .with_gas_limit(interop_tx.gasLimit.try_into().unwrap())
-                .with_gas_per_pubdata(U256::from(50_000))
-                .with_max_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
-                .with_max_priority_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
-                .with_from(from_addr),
-        )
+        let paymaster_params = PaymasterParams {
+            // TODO: fetch from interop contract
+            paymaster: address!("04FaEd9dCb8d7731d89fe94eb3cc8a29E0e10204"),
+            paymaster_input: Bytes::from_hex("0x1234").unwrap(),
+        };
+
+        let tx = TransactionRequest::default()
+            .with_call(&calldata)
+            .with_to(destination_interop_chain.interop_address)
+            // FIXME: no value passing.
+            //.with_value(interop_tx.value)
+            .with_gas_limit(interop_tx.gasLimit.try_into().unwrap())
+            .with_gas_per_pubdata(U256::from(50_000))
+            .with_max_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
+            .with_max_priority_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
+            .with_from(from_addr)
+            .with_paymaster(paymaster_params);
+
+        (destination_chain_id, tx)
     }
 
     // Checks if the interop message is of type b.
