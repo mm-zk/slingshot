@@ -1,18 +1,27 @@
 use alloy::{
+    consensus::Signed,
     dyn_abi::SolType,
     hex::FromHex,
     network::TransactionBuilder,
-    primitives::{address, Address, Bytes, FixedBytes, U256},
+    primitives::{Address, Bytes, FixedBytes, B256, U256},
     providers::Provider,
+    rlp::BytesMut,
     rpc::types::{Filter, Log},
     signers::local::PrivateKeySigner,
     sol_types::{SolCall, SolEvent},
 };
 use alloy_zksync::{
-    network::{transaction_request::TransactionRequest, unsigned_tx::eip712::PaymasterParams},
+    network::{
+        transaction_request::TransactionRequest, tx_envelope::TxEnvelope,
+        unsigned_tx::eip712::PaymasterParams,
+    },
     provider::zksync_provider,
     wallet::ZksyncWallet,
 };
+
+use alloy::network::eip2718::Encodable2718;
+
+use alloy::signers::Signature;
 use k256::ecdsa::SigningKey;
 
 use alloy::sol;
@@ -384,26 +393,41 @@ async fn handle_type_c_message(
     providers_map: &HashMap<u64, Arc<InteropChain>>,
     shared_map: Arc<Mutex<HashMap<FixedBytes<32>, InteropMessageParsed>>>,
 ) {
-    // TODO: also create the aliased account if needed...
-
-    let (destination_chain, tx) = msg
+    let (destination_chain, mut tx) = msg
         .create_transaction_request(providers_map, shared_map.clone())
         .await;
-    let receipt = providers_map
-        .get(&destination_chain)
-        .unwrap()
-        .provider
-        .send_transaction(tx)
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
 
-    println!(
-        "Sent type C tx to: {} hash: {}",
-        destination_chain, receipt.inner.transaction_hash
-    )
+    // We do a lot of work here, as era doesn't accept 'eth_sendTransaction' and alloy really wants
+    // to sign it with some wallet.
+    // So we construct the transaction parts manually - and then send as 'raw' transaction.
+
+    tx.prep_for_submission();
+    let provider = &providers_map.get(&destination_chain).unwrap().provider;
+
+    let sendable_tx = provider.fill(tx).await.unwrap();
+    let transaction_request = sendable_tx.as_builder().unwrap();
+
+    let unsigned_tx = transaction_request.clone().build_unsigned().unwrap();
+
+    let empty_signature = Signature::new(U256::ZERO, U256::ZERO, Default::default());
+
+    if let alloy_zksync::network::unsigned_tx::TypedTransaction::Eip712(data) = unsigned_tx {
+        // What about the hash??
+        let signed_tx =
+            TxEnvelope::Eip712(Signed::new_unchecked(data, empty_signature, B256::ZERO));
+
+        let mut buffer = BytesMut::new();
+        signed_tx.encode_2718(&mut buffer);
+        println!("Transaction payload: {}", hex::encode(&buffer));
+        let p1 = provider.send_raw_transaction(&buffer).await.unwrap();
+        let receipt = p1.get_receipt().await.unwrap();
+        println!(
+            "Sent type C tx to: {} hash: {}",
+            destination_chain, receipt.inner.transaction_hash
+        )
+    } else {
+        panic!("Wrong type");
+    }
 }
 
 #[derive(Parser, Debug)]
