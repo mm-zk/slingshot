@@ -10,6 +10,8 @@ import {EfficientCall} from "../lib/era-contracts/system-contracts/contracts/lib
 import {SystemContractHelper} from "../lib/era-contracts/system-contracts/contracts/libraries/SystemContractHelper.sol";
 import {IContractDeployer} from "../lib/era-contracts/system-contracts/contracts/ContractDeployer.sol";
 import {SystemContractsCaller} from "../lib/era-contracts/system-contracts/contracts/libraries/SystemContractsCaller.sol";
+import {CrossPaymaster} from "../src/CrossPaymaster.sol";
+import {PaymasterToken} from "../src/PaymasterToken.sol";
 
 contract InteropCenter {
     bytes1 constant BUNDLE_PREFIX = 0x01;
@@ -133,7 +135,7 @@ contract InteropCenter {
         uint256 bundleId,
         uint256 destinationChainId,
         address destinationAddress,
-        bytes calldata payload,
+        bytes memory payload,
         uint256 value
     ) public {
         // Ensure the bundle exists and has the correct destination chain
@@ -225,11 +227,27 @@ contract InteropCenter {
     function getAliasedAccount(
         address sourceAccount,
         uint256 sourceChainId
-    ) public returns (address) {
+    ) public view returns (address) {
         bytes32 salt = keccak256(
             abi.encodePacked(sourceChainId, sourceAccount)
         );
         return _getZKSyncCreate2Address(salt);
+    }
+
+    function getRemoteAliasedAccount(
+        address sourceAccount,
+        uint256 destinationChainId
+    ) public view returns (address) {
+        bytes32 salt = keccak256(
+            abi.encodePacked(block.chainid, sourceAccount)
+        );
+        address remoteInteropAddress = trustedSources[destinationChainId];
+        console2.log("Asking for aliased account on ", destinationChainId);
+        require(
+            remoteInteropAddress != address(0),
+            "No trusted interop on receiving side"
+        );
+        return _getZKSyncCreate2AddressRemote(salt, remoteInteropAddress);
     }
 
     function deployAliasedAccount(
@@ -350,6 +368,7 @@ contract InteropCenter {
                         )
                     )
                 );
+                console2.log("aliased account deployed");
             }
 
             // Call the interop function on the account
@@ -400,6 +419,30 @@ contract InteropCenter {
                             bytes.concat(
                                 keccak256("zksyncCreate2"), // zkSync-specific prefix
                                 bytes32(uint256(uint160(address(this)))), // Address of the contract deployer
+                                salt, // Salt for the deployment
+                                getZKSyncBytecodeHash(
+                                    type(InteropAccount).creationCode
+                                ), // Hash of the bytecode
+                                keccak256("") // Hash of the constructor input data
+                            )
+                        )
+                    )
+                )
+            );
+    }
+
+    function _getZKSyncCreate2AddressRemote(
+        bytes32 salt,
+        address remoteInteropAddress
+    ) internal view returns (address) {
+        return
+            address(
+                uint160(
+                    uint256(
+                        keccak256(
+                            bytes.concat(
+                                keccak256("zksyncCreate2"), // zkSync-specific prefix
+                                bytes32(uint256(uint160(remoteInteropAddress))), // Address of the contract deployer
                                 salt, // Salt for the deployment
                                 getZKSyncBytecodeHash(
                                     type(InteropAccount).creationCode
@@ -473,6 +516,7 @@ contract InteropCenter {
         return msgHash;
     }
 
+    // If you already have money on the destination chain.
     function requestInteropMinimal(
         uint256 destinationChain,
         address destinationAddress,
@@ -496,6 +540,109 @@ contract InteropCenter {
                 bundleHash,
                 bytes32(0),
                 address(0),
+                new bytes(0)
+            );
+    }
+
+    function payWithTokenInternal(
+        uint256 destinationChain,
+        uint256 amount
+    ) private returns (bytes32) {
+        // create the fee bundle.
+
+        console2.log(
+            "Querying preferred paymaster",
+            preferredPaymasters[block.chainid]
+        );
+
+        CrossPaymaster localCrossPaymaster = CrossPaymaster(
+            payable(preferredPaymasters[block.chainid])
+        );
+
+        address localToken = localCrossPaymaster.paymasterTokenAddress();
+        console2.log("Got local token", localToken);
+
+        PaymasterToken(localToken).transferFrom(
+            msg.sender,
+            address(this),
+            amount
+        );
+        console2.log("assets trasnferred");
+
+        address remoteRecipient = getRemoteAliasedAccount(
+            msg.sender,
+            destinationChain
+        );
+
+        console2.log("Got remote recipient", remoteRecipient);
+
+        uint256 bundleId = startBundle(destinationChain);
+        PaymasterToken(localToken).sendToRemote(
+            bundleId,
+            destinationChain,
+            remoteRecipient,
+            amount
+        );
+        console2.log("paymaster sent to remote");
+
+        address remotePaymasterToken = PaymasterToken(localToken)
+            .remoteAddresses(destinationChain);
+        require(
+            remotePaymasterToken != address(0),
+            "remote paymaster token is not set"
+        );
+
+        address remotePaymaster = preferredPaymasters[destinationChain];
+        require(remotePaymaster != address(0), "remote paymaster not set");
+
+        bytes memory feePayload = abi.encodeWithSignature(
+            "approve(address,uint256)",
+            remotePaymaster,
+            amount
+        );
+        console2.log("adding to bundle");
+        // We're calling 'addToBundle' without 'external' - so msg sender is kept.
+        addToBundle(
+            bundleId,
+            destinationChain,
+            remotePaymasterToken,
+            feePayload,
+            0
+        );
+
+        return finishAndSendBundle(bundleId);
+    }
+
+    function requestInteropMinimalPayWithToken(
+        uint256 destinationChain,
+        address destinationAddress,
+        bytes calldata payload,
+        uint256 gasLimit,
+        uint256 gasPrice
+    ) public returns (bytes32) {
+        // FIXME:hardcoded number of tokens.
+        console2.log("Computing fee bundle");
+        bytes32 feeBundleHash = payWithTokenInternal(destinationChain, 23);
+        console2.log("Computing fee bundle done");
+        console2.logBytes32(feeBundleHash);
+
+        bytes32 bundleHash = sendCall(
+            destinationChain,
+            destinationAddress,
+            payload,
+            0
+        );
+        address remotePaymaster = preferredPaymasters[destinationChain];
+
+        return
+            sendInteropTransaction(
+                destinationChain,
+                gasLimit,
+                gasPrice,
+                0,
+                bundleHash,
+                feeBundleHash,
+                remotePaymaster,
                 new bytes(0)
             );
     }

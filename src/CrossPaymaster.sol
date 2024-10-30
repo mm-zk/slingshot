@@ -8,22 +8,75 @@ import "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {IPaymaster, ExecutionResult, PAYMASTER_VALIDATION_SUCCESS_MAGIC} from "../lib/era-contracts/system-contracts/contracts/interfaces/IPaymaster.sol";
 import {Transaction, TransactionHelper} from "../lib/era-contracts/system-contracts/contracts/libraries/TransactionHelper.sol";
 import {PaymasterToken} from "../src/PaymasterToken.sol";
+import {InteropCenter} from "../src/InteropCenter.sol";
 
 contract CrossPaymaster is IPaymaster {
     using TransactionHelper for *;
 
     address public paymasterTokenAddress;
+    address public interopCenterAddress;
 
-    constructor(address _paymasterTokenAddress) payable {}
+    constructor(
+        address _paymasterTokenAddress,
+        address _interopCenterAddress
+    ) payable {
+        paymasterTokenAddress = _paymasterTokenAddress;
+        interopCenterAddress = _interopCenterAddress;
+    }
 
     function validateAndPayForPaymasterTransaction(
         bytes32 _txHash,
         bytes32 _suggestedSignedHash,
         Transaction calldata _transaction
     ) external payable returns (bytes4 magic, bytes memory context) {
+        // AAA - do not use msg.sender -- it is 'bootloader'..
         console2.log("using paymaster!!");
+
+        // It should:
+        // - check that full transaction is legit
+        // - unpack the bundle from the paymaster input ? or signature?
+        // - check the bundle
+        // - execute the bundle
+        // -- that bundle should have given user tokens - then grab these tokens
+        // -- and then pay for the user.
+
+        // TODO: check that whole TX is legit.
+
+        console2.log("unpacking fee");
+        InteropCenter.InteropMessage memory feeMessage = abi.decode(
+            _transaction.paymasterInput,
+            (InteropCenter.InteropMessage)
+        );
+        console2.log("Fee unpacked");
+        // Todo - proof should be taken from within signature.
+        bytes memory proof = new bytes(0);
+
+        // executing fee bundle.
+        InteropCenter(interopCenterAddress).executeInteropBundle(
+            feeMessage,
+            proof
+        );
+        console2.log("Fee executed");
+
+        address from = address(uint160(_transaction.from));
+
+        console2.log("Taking assets from", from);
+
+        uint256 currentBalance = PaymasterToken(paymasterTokenAddress)
+            .balanceOf(from);
+        console2.log("Current balance", currentBalance);
+
+        // TODO: take correct amount of tokens.
+        PaymasterToken(paymasterTokenAddress).transferFrom(
+            from,
+            address(this),
+            1
+        );
+        console2.log("Paying bootloader");
+
         bool success = _transaction.payToTheBootloader();
         require(success, "Failed to pay the fee to the operator");
+        console2.log("Paymaster is done");
         magic = PAYMASTER_VALIDATION_SUCCESS_MAGIC;
     }
 

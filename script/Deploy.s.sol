@@ -27,10 +27,13 @@ contract Deploy is Script {
         interopCenter = new InteropCenter();
         console2.log("Deployed InteropCenter at:", address(interopCenter));
 
-        paymasterToken = new PaymasterToken();
+        paymasterToken = new PaymasterToken(address(interopCenter));
         console2.log("Deployed Paymaster token at:", address(paymasterToken));
 
-        crossPaymaster = new CrossPaymaster(address(paymasterToken));
+        crossPaymaster = new CrossPaymaster(
+            address(paymasterToken),
+            address(interopCenter)
+        );
         console2.log("Deployed Paymaster  at:", address(crossPaymaster));
 
         greeter = new Greeter();

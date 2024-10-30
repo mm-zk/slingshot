@@ -35,6 +35,7 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::Mutex;
+use InteropCenter::InteropMessage;
 
 sol! {
     #[sol(rpc)]
@@ -91,6 +92,24 @@ sol! {
 
         mapping(uint256 => address) public preferredPaymasters;
 
+        function setPreferredPaymaster(
+            uint256 chainId,
+            address paymaster
+        ) public;
+
+    }
+
+    #[sol(rpc)]
+    contract CrossPaymaster {
+        address public paymasterTokenAddress;
+    }
+
+    #[sol(rpc)]
+    contract PaymasterToken {
+        function addOtherBridge(
+            uint256 sourceChainId,
+            address sourceAddress
+        ) public;
     }
 }
 
@@ -202,10 +221,30 @@ impl InteropMessageParsed {
             );
         }
 
-        // TODO: take this from the interop_tx instead.
+        let map = all_messages.lock().await;
+
+        let paymaster_input = if !interop_tx.feesBundleHash.is_zero() {
+            println!("Fee Bundle is set");
+            let fee_interop_msg = map
+                .get(&interop_tx.feesBundleHash)
+                .expect(&format!(
+                    "Failed to find fee bundle msg: {:?}",
+                    interop_tx.feesBundleHash
+                ))
+                .interop_message
+                .clone();
+
+            //fee_interop_msg.interop_message.abi_encode()
+            //vec![0u8]
+            InteropMessage::abi_encode(&fee_interop_msg)
+        } else {
+            vec![]
+        };
+        println!("Paymaster input is: {}", hex::encode(&paymaster_input));
+
         let paymaster_params = PaymasterParams {
-            paymaster: destination_interop_chain.get_preferred_paymaster().await,
-            paymaster_input: Bytes::from_hex("0x1234").unwrap(),
+            paymaster: interop_tx.destinationPaymaster,
+            paymaster_input: paymaster_input.into(),
         };
         let paymaster = paymaster_params.paymaster;
         println!("Using paymaster: {}", paymaster);
@@ -238,8 +277,6 @@ impl InteropMessageParsed {
                 .unwrap();
             println!("Sending 1 eth : {:?} ", tx_hash);
         }
-
-        let map = all_messages.lock().await;
 
         let bundle_msg = map.get(&interop_tx.bundleHash).unwrap();
 
@@ -322,6 +359,17 @@ impl InteropChain {
             .await
             .unwrap()
             ._0
+    }
+
+    pub async fn get_paymaster_basic_token(&self) -> Address {
+        let paymaster = self.get_preferred_paymaster().await;
+        let contract = CrossPaymaster::new(paymaster, &self.provider);
+        contract
+            .paymasterTokenAddress()
+            .call()
+            .await
+            .unwrap()
+            .paymasterTokenAddress
     }
 
     pub async fn listen_on_interop_messages<F, Fut>(&self, callback: F)
@@ -498,6 +546,8 @@ async fn main() -> anyhow::Result<()> {
             );
         }
     }
+
+    // Setup trust between inteops.
     for (_, source_chain) in &providers_map {
         for (_, destination_chain) in &providers_map {
             let admin_provider = zksync_provider()
@@ -523,6 +573,73 @@ async fn main() -> anyhow::Result<()> {
 
             println!(
                 "Trust from {} to {} tx {:?}",
+                source_chain.chain_id, destination_chain.chain_id, tx_hash
+            );
+        }
+    }
+
+    // Setup info about remote paymasters too
+    for (_, source_chain) in &providers_map {
+        let source_chain_paymaster = source_chain.get_preferred_paymaster().await;
+        for (_, destination_chain) in &providers_map {
+            let admin_provider = zksync_provider()
+                .with_recommended_fillers()
+                .wallet(destination_chain.admin_wallet.clone())
+                .on_http(destination_chain.rpc.parse().unwrap());
+
+            let contract = InteropCenter::new(destination_chain.interop_address, &admin_provider);
+
+            // TODO: before sending, maybe check if trust was already set?
+
+            let tx_hash = contract
+                .setPreferredPaymaster(
+                    source_chain.chain_id.try_into().unwrap(),
+                    source_chain_paymaster,
+                )
+                .send()
+                .await
+                .unwrap()
+                .watch()
+                .await
+                .unwrap();
+
+            println!(
+                "Paymaster Trust from {} to {} tx {:?}",
+                source_chain.chain_id, destination_chain.chain_id, tx_hash
+            );
+        }
+    }
+
+    // Setup trust between 'paymaster tokens'
+    for (_, source_chain) in &providers_map {
+        let source_chain_token = source_chain.get_paymaster_basic_token().await;
+        for (_, destination_chain) in &providers_map {
+            let admin_provider = zksync_provider()
+                .with_recommended_fillers()
+                .wallet(destination_chain.admin_wallet.clone())
+                .on_http(destination_chain.rpc.parse().unwrap());
+
+            let destination_chain_token: Address =
+                destination_chain.get_paymaster_basic_token().await;
+
+            let contract = PaymasterToken::new(destination_chain_token, &admin_provider);
+
+            // TODO: before sending, maybe check if trust was already set?
+
+            let tx_hash = contract
+                .addOtherBridge(
+                    source_chain.chain_id.try_into().unwrap(),
+                    source_chain_token,
+                )
+                .send()
+                .await
+                .unwrap()
+                .watch()
+                .await
+                .unwrap();
+
+            println!(
+                "Token Trust from {} to {} tx {:?}",
                 source_chain.chain_id, destination_chain.chain_id, tx_hash
             );
         }
