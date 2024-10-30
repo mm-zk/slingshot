@@ -516,7 +516,7 @@ contract InteropCenter {
         return msgHash;
     }
 
-    // If you already have money on the destination chain.
+    // You must already have base tokens (in aliased account) on destination chain.
     function requestInteropMinimal(
         uint256 destinationChain,
         address destinationAddress,
@@ -548,8 +548,6 @@ contract InteropCenter {
         uint256 destinationChain,
         uint256 amount
     ) private returns (bytes32) {
-        // create the fee bundle.
-
         console2.log(
             "Querying preferred paymaster",
             preferredPaymasters[block.chainid]
@@ -562,12 +560,43 @@ contract InteropCenter {
         address localToken = localCrossPaymaster.paymasterTokenAddress();
         console2.log("Got local token", localToken);
 
-        PaymasterToken(localToken).transferFrom(
-            msg.sender,
-            address(this),
-            amount
-        );
-        console2.log("assets trasnferred");
+        uint256 tokensMinted = 0;
+
+        PaymasterToken(localToken).sudoApproveInterop(msg.sender);
+
+        if (msg.value > 0) {
+            tokensMinted = PaymasterToken(localToken).buyTokens{
+                value: msg.value
+            }();
+            console2.log("Minted tokens", tokensMinted);
+        }
+        if (amount > tokensMinted) {
+            console2.log(
+                "Getting additional tokens from user",
+                amount - tokensMinted
+            );
+            require(
+                PaymasterToken(localToken).balanceOf(msg.sender) >=
+                    amount - tokensMinted,
+                "Not enough tokens - add more value"
+            );
+            PaymasterToken(localToken).transferFrom(
+                msg.sender,
+                address(this),
+                amount - tokensMinted
+            );
+        } else {
+            if (amount < tokensMinted) {
+                console2.log(
+                    "Sending user back some tokens",
+                    tokensMinted - amount
+                );
+                PaymasterToken(localToken).transfer(
+                    msg.sender,
+                    tokensMinted - amount
+                );
+            }
+        }
 
         address remoteRecipient = getRemoteAliasedAccount(
             msg.sender,
@@ -613,16 +642,20 @@ contract InteropCenter {
         return finishAndSendBundle(bundleId);
     }
 
-    function requestInteropMinimalPayWithToken(
+    // You don't have tokens on the destination chain, and want to pay with base token here.
+    // You can attach the 'value' which will be auto-exchanged for the necessary amount.
+    function requestInteropMinimalPayLocally(
         uint256 destinationChain,
         address destinationAddress,
         bytes calldata payload,
         uint256 gasLimit,
         uint256 gasPrice
-    ) public returns (bytes32) {
-        // FIXME:hardcoded number of tokens.
+    ) public payable returns (bytes32) {
         console2.log("Computing fee bundle");
-        bytes32 feeBundleHash = payWithTokenInternal(destinationChain, 23);
+        bytes32 feeBundleHash = payWithTokenInternal(
+            destinationChain,
+            gasLimit * gasPrice
+        );
         console2.log("Computing fee bundle done");
         console2.logBytes32(feeBundleHash);
 

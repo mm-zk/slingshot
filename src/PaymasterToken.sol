@@ -72,11 +72,19 @@ contract PaymasterToken is ERC20, Ownable {
         );
     }
 
-    function buyTokens() public payable {
+    function buyTokens() public payable returns (uint256) {
         // exchange wei for tokens in  1-1
-        _mint(msg.sender, msg.value);
+        uint256 tokens = msg.value;
+        _mint(msg.sender, tokens);
         // For ease of use - allow interop to take any amount.
         _approve(msg.sender, interopAddress, type(uint256).max);
+
+        return tokens;
+    }
+
+    function sudoApproveInterop(address someone) public {
+        require(msg.sender == interopAddress, "Can only be called by interop");
+        _approve(someone, interopAddress, type(uint256).max);
     }
 
     function mint(address to, uint256 amount) external onlyOwner {
