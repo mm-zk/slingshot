@@ -12,7 +12,87 @@ import {Transaction, TransactionHelper} from "../lib/era-contracts/system-contra
 
 import {Test, console} from "../lib/forge-std/src/Test.sol";
 import {TestExt} from "../lib/forge-zksync-std/src/TestExt.sol";
-import {Vm} from "forge-std/Vm.sol";
+import {Vm} from "../lib/forge-std/src/Vm.sol";
+
+contract TransactionConversion is Test, TestExt {
+    InteropCenter public interopCenter;
+
+    function setUp() public {}
+
+    function test_Conversion() public {
+        interopCenter = new InteropCenter();
+        console2.log("Deployed InteropCenter at:", address(interopCenter));
+
+        address interopOnSource = address(
+            0x6Fb7817d183F7C84A546770338bf1F5d2111e43a
+        );
+        interopCenter.addTrustedSource(99, interopOnSource);
+
+        address userSender = address(
+            0x5f3649BBfCE8f62738c8346588e0F62469087d9e
+        );
+        address localAliased = interopCenter.getAliasedAccount(userSender, 99);
+
+        InteropCenter.InteropMessage memory executionBundle = InteropCenter
+            .InteropMessage({
+                data: hex"0102",
+                sender: address(0),
+                sourceChainId: 55,
+                messageNum: 44
+            });
+
+        InteropCenter.InteropMessage memory feeBundle = InteropCenter
+            .InteropMessage({
+                data: hex"010204",
+                sender: address(0),
+                sourceChainId: 55,
+                messageNum: 45
+            });
+
+        InteropCenter.TransactionReservedStuff memory stuff = InteropCenter
+            .TransactionReservedStuff({
+                sourceChainSender: userSender,
+                interopMessageSender: interopOnSource,
+                sourceChainId: 99,
+                messageNum: 0,
+                destinationChainId: block.chainid,
+                bundleHash: keccak256(abi.encode(executionBundle)),
+                feesBundleHash: keccak256(abi.encode(feeBundle))
+            });
+
+        bytes memory proof = hex"";
+
+        Transaction memory transaction = Transaction({
+            txType: 113,
+            from: uint256(uint160(localAliased)),
+            to: uint256(uint160(address(interopCenter))),
+            gasLimit: 0,
+            gasPerPubdataByteLimit: 10000,
+            maxFeePerGas: 0,
+            maxPriorityFeePerGas: 0,
+            paymaster: 0,
+            nonce: 0,
+            value: 0,
+            reserved: [uint256(0), uint256(0), uint256(0), uint256(0)],
+            data: abi.encodeWithSignature(
+                "executeInteropBundle((bytes,address,uint256,uint256),bytes)",
+                executionBundle,
+                proof
+            ),
+            signature: hex"05",
+            factoryDeps: new bytes32[](0),
+            paymasterInput: abi.encode(feeBundle),
+            reservedDynamic: abi.encode(stuff)
+        });
+
+        InteropCenter.InteropMessage memory message = interopCenter
+            .transactionToInteropMessage(transaction);
+        // TODO: compare hash.
+
+        // And also verify.
+        interopCenter.verifyPotentialTransaction(transaction);
+    }
+}
 
 contract PaymasterScript is Test, TestExt {
     InteropCenter public interopCenter;

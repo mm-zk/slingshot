@@ -691,6 +691,184 @@ contract InteropCenter {
     ) public onlyOwner {
         preferredPaymasters[chainId] = paymaster;
     }
+
+    struct TransactionReservedStuff {
+        // For now - figure out of there is a better place for them.
+
+        address sourceChainSender;
+        address interopMessageSender;
+        uint256 sourceChainId;
+        uint256 messageNum;
+        uint256 destinationChainId;
+        bytes32 bundleHash;
+        bytes32 feesBundleHash;
+    }
+
+    function transactionToInteropMessage(
+        Transaction memory transaction
+    ) public pure returns (InteropMessage memory) {
+        console2.log("Starting conversion");
+        InteropTransaction memory interopTx = transactionToInteropTransaction(
+            transaction
+        );
+        console2.log("got interop tx");
+
+        bytes memory serializedTransaction = abi.encodePacked(
+            InteropCenter.TRANSACTION_PREFIX,
+            abi.encode(transaction)
+        );
+
+        TransactionReservedStuff memory stuff = abi.decode(
+            transaction.reservedDynamic,
+            (TransactionReservedStuff)
+        );
+
+        InteropMessage memory message = InteropMessage({
+            data: serializedTransaction,
+            sender: stuff.interopMessageSender,
+            sourceChainId: stuff.sourceChainId,
+            messageNum: stuff.messageNum
+        });
+    }
+
+    function verifyPotentialTransaction(
+        Transaction memory transaction
+    ) public view {
+        TransactionReservedStuff memory stuff = abi.decode(
+            transaction.reservedDynamic,
+            (TransactionReservedStuff)
+        );
+        // stuff verification
+
+        // sourceChainSender - below
+        require(
+            trustedSources[stuff.sourceChainId] != address(0),
+            "source chain not trusted"
+        );
+
+        require(
+            trustedSources[stuff.sourceChainId] == stuff.interopMessageSender,
+            "Untrusted source"
+        );
+        // messageNum - doesnt matter.
+        require(
+            stuff.destinationChainId == block.chainid,
+            "invalid destination chain"
+        );
+        // bundle hash - verification below
+        // feesbundle hash - verification below.
+
+        // transaction verification
+        require(transaction.txType == 113, "Wrong tx type - expected 113");
+
+        // Check aliased account
+        require(
+            transaction.from ==
+                uint256(
+                    uint160(
+                        getAliasedAccount(
+                            stuff.sourceChainSender,
+                            stuff.sourceChainId
+                        )
+                    )
+                ),
+            "wrong aliased account in from"
+        );
+
+        require(
+            transaction.to == uint256(uint160(address(this))),
+            "wrong to account"
+        );
+        // gas limit - copied to interop tx
+        require(
+            transaction.gasPerPubdataByteLimit == 10000,
+            "Wrong gas per pubdata constant"
+        );
+        // max fee per gas - copied to interop tx
+        require(
+            transaction.maxFeePerGas == transaction.maxPriorityFeePerGas,
+            "Max fee and max prio should be equal"
+        );
+        // paymaster - copied to interop tx (TODO: we should compare it somehow with the preferred one)
+        // nonce ??
+        // value - copied to interop tx
+        require(transaction.reserved[0] == 0, "reserved field must not be set");
+        require(transaction.reserved[1] == 0, "reserved field must not be set");
+        require(transaction.reserved[2] == 0, "reserved field must not be set");
+        require(transaction.reserved[3] == 0, "reserved field must not be set");
+
+        bytes4 selector = bytes4(
+            keccak256(
+                "executeInteropBundle((bytes,address,uint256,uint256),bytes)"
+            )
+        );
+        console2.log("Selector ");
+        console2.logBytes4(selector);
+        require(transaction.data.length >= 4, "Data too short");
+
+        require(bytes4(transaction.data) == selector, "invalid selector");
+
+        bytes memory data = transaction.data;
+        assembly {
+            // Add 1 to skip the first 4 bytes and directly decode the rest
+            data := add(data, 0x4)
+        }
+
+        (InteropMessage memory execPayload, ) = abi.decode(
+            data,
+            (InteropMessage, bytes)
+        );
+
+        require(
+            keccak256(abi.encode(execPayload)) == stuff.bundleHash,
+            "Bundle hash doesnt match"
+        );
+
+        // signature - not needed (this is the proof).
+
+        require(transaction.factoryDeps.length == 0, "no factory deps for now");
+
+        // if feesBundle are set - they should travel in paymaster input.
+        if (stuff.feesBundleHash != bytes32(0)) {
+            require(
+                keccak256(transaction.paymasterInput) == stuff.feesBundleHash,
+                "FeesBundleHash doesnt match"
+            );
+        }
+    }
+
+    function transactionToInteropTransaction(
+        Transaction memory transaction
+    ) public pure returns (InteropTransaction memory) {
+        console2.log("Starting internal conversion. unpacking stuff..");
+        TransactionReservedStuff memory stuff = abi.decode(
+            transaction.reservedDynamic,
+            (TransactionReservedStuff)
+        );
+
+        console2.log("stuff unpacked");
+
+        bytes memory paymasterInput;
+
+        if (stuff.feesBundleHash == bytes32(0)) {
+            paymasterInput = transaction.paymasterInput;
+        } else {
+            paymasterInput = "";
+        }
+
+        InteropTransaction memory result = InteropTransaction({
+            sourceChainSender: stuff.sourceChainSender,
+            destinationChain: stuff.destinationChainId,
+            gasLimit: transaction.gasLimit,
+            gasPrice: transaction.maxFeePerGas,
+            value: transaction.value,
+            bundleHash: stuff.bundleHash,
+            feesBundleHash: stuff.feesBundleHash,
+            destinationPaymaster: address(uint160(transaction.paymaster)),
+            destinationPaymasterInput: paymasterInput
+        });
+        return result;
+    }
 }
 
 contract InteropAccount is IAccount {
