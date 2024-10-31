@@ -71,7 +71,7 @@ Run the CLI with the same private key, it will handle the message passing and tr
 
 
 ```shell
-cargo run -- -r http://localhost:8012 0xTHIS_IS_INTEROP_ADDRESS -r http://localhost:8013 0xTHIS_IS_INTEROP_ADDRESS  --private-key 0x3d3cbc973389cb26f657686445bcc75662b415b656078503592ac8c1abb8810e --base-token-price 200000 --base-token-price 100
+cargo run -- -r http://localhost:8012 0xTHIS_IS_INTEROP_ADDRESS -r http://localhost:8013 0xTHIS_IS_INTEROP_ADDRESS  --private-key 0x3d3cbc973389cb26f657686445bcc75662b415b656078503592ac8c1abb8810e --base-token-price 200000 --base-token-price 100 --paymaster-balance-cents 20000
 ```
 
 ### Examples how to trigger:
@@ -85,7 +85,7 @@ cast send -r http://localhost:8012 0xTHIS_IS_INTEROP_ADDRESS "sendInteropMessage
 Creating 'type C' interop transaction (that would send over 100 value to empty address):
 
 ```
-cast send -r http://localhost:8012 0xTHIS_IS_INTEROP_ADDRESS "requestInteropMinimal(uint256, address, bytes, uint256, uint256, uint256)" 501 0x8B912Dfa4Db5f44FB5B6c8A2BA8925f01DA322EE 0x 100 10000000 1000000000  --private-key 0x7becc4a46e0c3b512d380ca73a4c868f790d1055a7698f38fb3ca2b2ac97efbb
+cast send -r http://localhost:8012 0xTHIS_IS_INTEROP_ADDRESS "requestInteropMinimal(uint256, address, bytes, uint256, uint256, uint256)" 501 0x8B912Dfa4Db5f44FB5B6c8A2BA8925f01DA322EE 0x 100 10000000 1000000000  --private-key 0x7becc4a46e0c3b512d380ca73a4c868f790d1055a7698f38fb3ca2b2ac97efbb 
 ```
 
 Paying with tokens:
