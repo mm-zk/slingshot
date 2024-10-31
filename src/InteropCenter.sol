@@ -721,11 +721,11 @@ contract InteropCenter {
     function transactionToInteropMessage(
         Transaction memory transaction
     ) public pure returns (InteropMessage memory) {
-        console2.log("Starting conversion");
+        //console2.log("Starting conversion");
         InteropTransaction memory interopTx = transactionToInteropTransaction(
             transaction
         );
-        console2.log("got interop tx");
+        //console2.log("got interop tx");
 
         bytes memory serializedTransaction = abi.encodePacked(
             InteropCenter.TRANSACTION_PREFIX,
@@ -748,13 +748,13 @@ contract InteropCenter {
     function verifyPotentialTransaction(
         Transaction memory transaction
     ) public view {
-        console2.log("Starting verification - unpacking from signature");
+        //console2.log("Starting verification - unpacking from signature");
 
         TransactionReservedStuff memory stuff = abi.decode(
             transaction.signature,
             (TransactionReservedStuff)
         );
-        console2.log("stuff unpacked from sig");
+        //console2.log("stuff unpacked from sig");
 
         // stuff verification
 
@@ -779,7 +779,7 @@ contract InteropCenter {
         // transaction verification
         require(transaction.txType == 113, "Wrong tx type - expected 113");
 
-        console2.log("checking aliased account");
+        //console2.log("checking aliased account");
 
         // Check aliased account
         require(
@@ -794,7 +794,7 @@ contract InteropCenter {
                 ),
             "wrong aliased account in from"
         );
-        console2.log("aliased account ok");
+        //console2.log("aliased account ok");
 
         require(
             transaction.to == uint256(uint160(address(this))),
@@ -818,15 +818,15 @@ contract InteropCenter {
         require(transaction.reserved[2] == 0, "reserved field must not be set");
         require(transaction.reserved[3] == 0, "reserved field must not be set");
 
-        console2.log("computing selector");
+        //console2.log("computing selector");
 
         bytes4 selector = bytes4(
             keccak256(
                 "executeInteropBundle((bytes,address,uint256,uint256),bytes)"
             )
         );
-        console2.log("Selector ");
-        console2.logBytes4(selector);
+        //console2.log("Selector ");
+        //console2.logBytes4(selector);
         require(transaction.data.length >= 4, "Data too short");
 
         require(bytes4(transaction.data) == selector, "invalid selector");
@@ -863,13 +863,13 @@ contract InteropCenter {
     function transactionToInteropTransaction(
         Transaction memory transaction
     ) public pure returns (InteropTransaction memory) {
-        console2.log("Starting internal conversion. unpacking stuff..");
+        //console2.log("Starting internal conversion. unpacking stuff..");
         TransactionReservedStuff memory stuff = abi.decode(
             transaction.signature,
             (TransactionReservedStuff)
         );
 
-        console2.log("stuff unpacked");
+        //console2.log("stuff unpacked");
 
         bytes memory paymasterInput;
 
@@ -898,10 +898,18 @@ contract InteropAccount is IAccount {
     using TransactionHelper for *;
 
     address public trustedInteropCenter;
+    address public preferredPaymaster;
 
     // Constructor to set the trusted interop center
     constructor() {
         trustedInteropCenter = msg.sender;
+        preferredPaymaster = InteropCenter(msg.sender).preferredPaymasters(
+            block.chainid
+        );
+        require(
+            preferredPaymaster != address(0),
+            "InteropCenter has no paymaster set"
+        );
     }
 
     // Execute function to forward interop call
@@ -934,32 +942,36 @@ contract InteropAccount is IAccount {
             )
         );
 
-        console2.log("Signature len", _transaction.signature.length);
+        // If we're using the preferred paymaster - it will take care of all the verification.
+        // Otherwise, we have to verify ourselves - and it might fail, as we'll be
+        // touching many slots.
+        // FIXME.
+        if (_transaction.paymaster != uint256(uint160(preferredPaymaster))) {
+            //console2.log("Signature len", _transaction.signature.length);
+            // We have to verify following things:
+            //
+            // * change this transaction into 'interop message' - and check.
+            //console2.log("Verify incoming message");
+            InteropCenter(trustedInteropCenter).verifyPotentialTransaction(
+                _transaction
+            );
+            //console2.log("Verification passed.");
 
-        // We have to verify following things:
-        //
-        // * change this transaction into 'interop message' - and check.
+            InteropCenter.InteropMessage memory message = InteropCenter(
+                trustedInteropCenter
+            ).transactionToInteropMessage(_transaction);
 
-        console2.log("Verify incoming message");
-        InteropCenter(trustedInteropCenter).verifyPotentialTransaction(
-            _transaction
-        );
-        console2.log("Verification passed.");
+            bytes32 msgHash = keccak256(abi.encode(message));
+            //console2.log("Computed msg hash");
+            //console2.logBytes32(msgHash);
 
-        InteropCenter.InteropMessage memory message = InteropCenter(
-            trustedInteropCenter
-        ).transactionToInteropMessage(_transaction);
+            bytes memory proof = new bytes(0);
 
-        bytes32 msgHash = keccak256(abi.encode(message));
-        console2.log("Computed msg hash");
-        console2.logBytes32(msgHash);
-
-        bytes memory proof = new bytes(0);
-
-        InteropCenter(trustedInteropCenter).verifyInteropMessage(
-            msgHash,
-            proof
-        );
+            InteropCenter(trustedInteropCenter).verifyInteropMessage(
+                msgHash,
+                proof
+            );
+        }
 
         magic = ACCOUNT_VALIDATION_SUCCESS_MAGIC;
     }
