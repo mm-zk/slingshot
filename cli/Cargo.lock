@@ -601,6 +601,7 @@ dependencies = [
 [[package]]
 name = "alloy-zksync"
 version = "0.1.0"
+source = "git+https://github.com/mm-zk/alloy-zksync.git?rev=ab911a9cdd67dbb403de58559f5ca08030921746#ab911a9cdd67dbb403de58559f5ca08030921746"
 dependencies = [
  "alloy",
  "async-trait",

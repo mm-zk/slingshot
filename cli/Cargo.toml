@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-alloy-zksync = { path = "../../alloy-zksync"}
+# alloy-zksync = { path = "../../alloy-zksync"}
+
+alloy-zksync = {git = "https://github.com/mm-zk/alloy-zksync.git", rev = "ab911a9cdd67dbb403de58559f5ca08030921746"}
 
 alloy = { version = "0.4", features = ["full", "rlp", "serde", "sol-types"] } # TODO: Set features granularly?
 async-trait = "0.1.80"

@@ -431,7 +431,9 @@ impl InteropChain {
         }
     }
 
-    pub async fn listen_on_interop_messages<F, Fut>(&self, callback: F)
+    // streaming has lower latency, but works only on 'local' chains.
+    // for external ones you have to actively pull.
+    pub async fn listen_on_interop_messages<F, Fut>(&self, streaming: bool, callback: F)
     where
         F: Fn(Log) -> Fut,
         Fut: futures::future::Future<Output = ()>,
@@ -450,18 +452,40 @@ impl InteropChain {
             callback(log).await;
         }
 
-        println!("Starting to watch logs...");
+        if streaming {
+            println!("Starting to watch logs...");
 
-        let mut log_stream = self
-            .provider
-            .watch_logs(&filter)
-            .await
-            .unwrap()
-            .into_stream();
+            let mut log_stream = self
+                .provider
+                .watch_logs(&filter)
+                .await
+                .unwrap()
+                .into_stream();
 
-        while let Some(log) = log_stream.next().await {
-            for l in log {
-                callback(l).await;
+            while let Some(log) = log_stream.next().await {
+                for l in log {
+                    callback(l).await;
+                }
+            }
+        } else {
+            println!("Using 30 seconds polling to watch logs..");
+            let mut latest_processed_block = latest_block;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                let latest_block = self.provider.get_block_number().await.unwrap();
+                if latest_block > latest_processed_block {
+                    let filter = Filter::new()
+                        .from_block(latest_processed_block)
+                        .to_block(latest_block)
+                        .event_signature(InteropCenter::InteropMessageSent::SIGNATURE_HASH)
+                        .address(self.interop_address);
+                    let logs = self.provider.get_logs(&filter).await.unwrap();
+
+                    for log in logs {
+                        callback(log).await;
+                    }
+                }
+                latest_processed_block = latest_block;
             }
         }
     }
@@ -573,6 +597,10 @@ struct Cli {
     // How many assets should each paymaster hold. (default ~20USD).
     #[arg(long, default_value = "2000")]
     paymaster_balance_cents: u64,
+
+    // If true - use streaming to get logs (lower latency, but doens't work well on public networks).
+    #[arg(long)]
+    streaming: bool,
 }
 
 pub fn to_human_size(input: U256) -> String {
@@ -833,6 +861,8 @@ async fn main() -> anyhow::Result<()> {
     let shared_map: Arc<Mutex<HashMap<FixedBytes<32>, InteropMessageParsed>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
+    let streaming = cli.streaming;
+
     let handles: Vec<_> = providers_map
         .clone()
         .iter()
@@ -845,7 +875,7 @@ async fn main() -> anyhow::Result<()> {
                 let shared_map = shared_map.clone();
                 let chain_id = entry2.chain_id;
                 entry2
-                    .listen_on_interop_messages(|log| {
+                    .listen_on_interop_messages(streaming, |log| {
                         let shared_map = shared_map.clone();
                         let providers_map = providers_map.clone();
                         let chain_id = chain_id.clone();
