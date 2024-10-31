@@ -190,7 +190,7 @@ impl InteropMessageParsed {
             InteropCenter::InteropTransaction::abi_decode(&self.interop_message.data[1..], true)
                 .unwrap();
 
-        println!("interop tx destination: {}", interop_tx.destinationChain);
+        println!("Interop TX: destination: {}", interop_tx.destinationChain);
 
         let destination_chain_id: u64 = interop_tx.destinationChain.try_into().unwrap();
         let destination_interop_chain = providers_map.get(&destination_chain_id).unwrap();
@@ -199,7 +199,7 @@ impl InteropMessageParsed {
             .is_bundle_executed(interop_tx.bundleHash)
             .await
         {
-            println!("Bundle is already executed");
+            println!("    Bundle is already executed");
             return None;
         }
 
@@ -208,7 +208,7 @@ impl InteropMessageParsed {
                 .is_bundle_executed(interop_tx.feesBundleHash)
                 .await
         {
-            println!("Fee Bundle is already executed");
+            println!("    Fee Bundle is already executed");
             return None;
         }
 
@@ -220,16 +220,16 @@ impl InteropMessageParsed {
             )
             .await;
 
-        println!("Got 'from' address set to: {:?}", from_addr);
+        println!("  'from' address set to: {:?}", from_addr);
 
         let code = destination_interop_chain
             .provider
             .get_code_at(from_addr)
             .await
             .unwrap();
-        println!("Code length is {}", code.len());
         if code.len() == 0 {
             // No contract deployed.
+            println!("  No account for this user - deploying aliased account.");
 
             let admin_provider = zksync_provider()
                 .with_recommended_fillers()
@@ -254,7 +254,7 @@ impl InteropMessageParsed {
                 .unwrap();
 
             println!(
-                "Deployed aliased account on chain {} {:?} with tx {:?}",
+                "   Deployed aliased account on chain {} {:?} with tx {:?}",
                 destination_chain_id, from_addr, tx_hash
             );
         }
@@ -262,7 +262,7 @@ impl InteropMessageParsed {
         let map = all_messages.lock().await;
 
         let paymaster_input = if !interop_tx.feesBundleHash.is_zero() {
-            println!("Fee Bundle is set");
+            println!("  Fee Bundle is present");
             let fee_interop_msg = map
                 .get(&interop_tx.feesBundleHash)
                 .expect(&format!(
@@ -275,14 +275,13 @@ impl InteropMessageParsed {
         } else {
             vec![]
         };
-        println!("Paymaster input is: {}", hex::encode(&paymaster_input));
 
         let paymaster_params = PaymasterParams {
             paymaster: interop_tx.destinationPaymaster,
             paymaster_input: paymaster_input.into(),
         };
         let paymaster = paymaster_params.paymaster;
-        println!("Using paymaster: {}", paymaster);
+        println!("  Using paymaster: {}", paymaster);
 
         destination_interop_chain.refill_paymaster(paymaster).await;
 
@@ -531,7 +530,7 @@ async fn handle_type_c_message(
 
             let mut buffer = BytesMut::new();
             signed_tx.encode_2718(&mut buffer);
-            println!("Transaction payload: {}", hex::encode(&buffer));
+            //println!("Transaction payload: {}", hex::encode(&buffer));
             let p1 = provider.send_raw_transaction(&buffer).await;
 
             match p1 {
@@ -794,7 +793,10 @@ async fn main() -> anyhow::Result<()> {
                         async move {
                             let msg = InteropMessageParsed::from_log(&log, chain_id);
 
-                            println!("Got msg {:?}", msg);
+                            println!(
+                                "Got msg from chain: {:?} id:{} hash: {:?} ",
+                                msg.chain_id, msg.interop_message.messageNum, msg.msg_hash
+                            );
 
                             handle_type_a_message(&msg, &providers_map).await;
 
