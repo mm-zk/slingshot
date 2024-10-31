@@ -178,8 +178,8 @@ contract TokensInterop is Test, TestExt {
         interopCenter.addTrustedSource(chainId, address(interopCenter2));
         interopCenter2.addTrustedSource(chainId, address(interopCenter));
 
-        paymasterToken.addOtherBridge(chainId2, address(paymasterToken2));
-        paymasterToken2.addOtherBridge(chainId, address(paymasterToken));
+        paymasterToken.addOtherBridge(chainId2, address(paymasterToken2), 1, 1);
+        paymasterToken2.addOtherBridge(chainId, address(paymasterToken), 1, 1);
 
         // Mint some tokens on '1'.
         address localAddr = 0xfA45863d774e9FD27DEC19c418d9d7eB4C8a27E9;

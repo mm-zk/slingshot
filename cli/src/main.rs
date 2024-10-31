@@ -79,6 +79,8 @@ sol! {
 
 
         function receiveInteropMessage(bytes32 msgHash) public;
+        mapping(bytes32 => bool) public receivedMessages;
+
 
         function addTrustedSource(
             uint256 sourceChainId,
@@ -96,6 +98,9 @@ sol! {
             uint256 chainId,
             address paymaster
         ) public;
+
+        mapping(bytes32 => bool) public executedBundles;
+
 
 
         struct TransactionReservedStuff {
@@ -122,7 +127,9 @@ sol! {
     contract PaymasterToken {
         function addOtherBridge(
             uint256 sourceChainId,
-            address sourceAddress
+            address sourceAddress,
+            uint256 ratioNominator,
+            uint256 ratioDenominator
         ) public;
     }
 }
@@ -178,15 +185,32 @@ impl InteropMessageParsed {
         &self,
         providers_map: &HashMap<u64, Arc<InteropChain>>,
         all_messages: Arc<Mutex<HashMap<FixedBytes<32>, InteropMessageParsed>>>,
-    ) -> (u64, TransactionRequest) {
+    ) -> Option<(u64, TransactionRequest)> {
         let interop_tx =
             InteropCenter::InteropTransaction::abi_decode(&self.interop_message.data[1..], true)
                 .unwrap();
 
-        println!("interop tx desxtination: {}", interop_tx.destinationChain);
+        println!("interop tx destination: {}", interop_tx.destinationChain);
 
         let destination_chain_id: u64 = interop_tx.destinationChain.try_into().unwrap();
         let destination_interop_chain = providers_map.get(&destination_chain_id).unwrap();
+
+        if destination_interop_chain
+            .is_bundle_executed(interop_tx.bundleHash)
+            .await
+        {
+            println!("Bundle is already executed");
+            return None;
+        }
+
+        if !interop_tx.feesBundleHash.is_zero()
+            && destination_interop_chain
+                .is_bundle_executed(interop_tx.feesBundleHash)
+                .await
+        {
+            println!("Fee Bundle is already executed");
+            return None;
+        }
 
         let from_addr = destination_interop_chain
             .get_aliased_account_address(
@@ -247,9 +271,6 @@ impl InteropMessageParsed {
                 ))
                 .interop_message
                 .clone();
-
-            //fee_interop_msg.interop_message.abi_encode()
-            //vec![0u8]
             InteropMessage::abi_encode(&fee_interop_msg)
         } else {
             vec![]
@@ -263,34 +284,7 @@ impl InteropMessageParsed {
         let paymaster = paymaster_params.paymaster;
         println!("Using paymaster: {}", paymaster);
 
-        let balance = destination_interop_chain
-            .provider
-            .get_balance(paymaster)
-            .await
-            .unwrap();
-
-        // Refill the paymaster if needed.
-        let mut limit: U256 = 1_000_000.try_into().unwrap();
-        limit = limit.checked_mul(1_000_000.try_into().unwrap()).unwrap();
-        limit = limit.checked_mul(1_000_000.try_into().unwrap()).unwrap();
-
-        if balance < limit {
-            let admin_provider = zksync_provider()
-                .with_recommended_fillers()
-                .wallet(destination_interop_chain.admin_wallet.clone())
-                .on_http(destination_interop_chain.rpc.parse().unwrap());
-            let tx = TransactionRequest::default()
-                .with_to(paymaster)
-                .with_value(limit);
-            let tx_hash = admin_provider
-                .send_transaction(tx)
-                .await
-                .unwrap()
-                .watch()
-                .await
-                .unwrap();
-            println!("Sending 1 eth : {:?} ", tx_hash);
-        }
+        destination_interop_chain.refill_paymaster(paymaster).await;
 
         let bundle_msg = map.get(&interop_tx.bundleHash).unwrap();
 
@@ -327,7 +321,7 @@ impl InteropMessageParsed {
             .with_paymaster(paymaster_params)
             .with_custom_signature(custom_signature);
 
-        (destination_chain_id, tx)
+        Some((destination_chain_id, tx))
     }
 
     // Checks if the interop message is of type b.
@@ -357,6 +351,8 @@ pub struct InteropChain {
     pub rpc: String,
     pub chain_id: u64,
     pub admin_wallet: ZksyncWallet,
+    pub base_token_price: u64,
+    pub tokens_for_paymaster: U256,
 }
 
 const BLOCKS_IN_THE_PAST: u64 = 1000;
@@ -398,6 +394,40 @@ impl InteropChain {
             .await
             .unwrap()
             .paymasterTokenAddress
+    }
+
+    pub async fn is_bundle_executed(&self, bundle_hash: FixedBytes<32>) -> bool {
+        let contract = InteropCenter::new(self.interop_address, &self.provider);
+        contract
+            .executedBundles(bundle_hash)
+            .call()
+            .await
+            .unwrap()
+            ._0
+    }
+
+    pub async fn refill_paymaster(&self, paymaster: Address) {
+        let balance = self.provider.get_balance(paymaster).await.unwrap();
+
+        // We want 0.02 Eth (roughly).
+        let limit = self.tokens_for_paymaster;
+        if balance < limit {
+            let admin_provider = zksync_provider()
+                .with_recommended_fillers()
+                .wallet(self.admin_wallet.clone())
+                .on_http(self.rpc.parse().unwrap());
+            let tx = TransactionRequest::default()
+                .with_to(paymaster)
+                .with_value(limit);
+            let tx_hash = admin_provider
+                .send_transaction(tx)
+                .await
+                .unwrap()
+                .watch()
+                .await
+                .unwrap();
+            println!("Sending {} tokens to paymaster : {:?} ", limit, tx_hash);
+        }
     }
 
     pub async fn listen_on_interop_messages<F, Fut>(&self, callback: F)
@@ -449,18 +479,24 @@ async fn handle_type_a_message(
 
         let contract = InteropCenter::new(entry.interop_address, &admin_provider);
 
-        // TODO: before sending, maybe check if the message was forwarded already..
-
-        let tx_hash = contract
-            .receiveInteropMessage(msg.msg_hash)
-            .send()
+        if !contract
+            .receivedMessages(msg.msg_hash)
+            .call()
             .await
             .unwrap()
-            .watch()
-            .await
-            .unwrap();
+            ._0
+        {
+            let tx_hash = contract
+                .receiveInteropMessage(msg.msg_hash)
+                .send()
+                .await
+                .unwrap()
+                .watch()
+                .await
+                .unwrap();
 
-        println!("Forwarded msg to {} with tx {:?}", chain_id, tx_hash);
+            println!("Forwarded msg to {} with tx {:?}", chain_id, tx_hash);
+        }
     }
 }
 
@@ -469,40 +505,50 @@ async fn handle_type_c_message(
     providers_map: &HashMap<u64, Arc<InteropChain>>,
     shared_map: Arc<Mutex<HashMap<FixedBytes<32>, InteropMessageParsed>>>,
 ) {
-    let (destination_chain, mut tx) = msg
+    let transaction_request = msg
         .create_transaction_request(providers_map, shared_map.clone())
         .await;
 
-    // We do a lot of work here, as era doesn't accept 'eth_sendTransaction' and alloy really wants
-    // to sign it with some wallet.
-    // So we construct the transaction parts manually - and then send as 'raw' transaction.
+    if let Some((destination_chain, mut tx)) = transaction_request {
+        // We do a lot of work here, as era doesn't accept 'eth_sendTransaction' and alloy really wants
+        // to sign it with some wallet.
+        // So we construct the transaction parts manually - and then send as 'raw' transaction.
 
-    tx.prep_for_submission();
-    let provider = &providers_map.get(&destination_chain).unwrap().provider;
+        tx.prep_for_submission();
+        let provider = &providers_map.get(&destination_chain).unwrap().provider;
 
-    let sendable_tx = provider.fill(tx).await.unwrap();
-    let transaction_request = sendable_tx.as_builder().unwrap();
+        let sendable_tx = provider.fill(tx).await.unwrap();
+        let transaction_request = sendable_tx.as_builder().unwrap();
 
-    let unsigned_tx = transaction_request.clone().build_unsigned().unwrap();
+        let unsigned_tx = transaction_request.clone().build_unsigned().unwrap();
 
-    let empty_signature = Signature::new(U256::ZERO, U256::ZERO, Default::default());
+        let empty_signature = Signature::new(U256::ZERO, U256::ZERO, Default::default());
 
-    if let alloy_zksync::network::unsigned_tx::TypedTransaction::Eip712(data) = unsigned_tx {
-        // What about the hash??
-        let signed_tx =
-            TxEnvelope::Eip712(Signed::new_unchecked(data, empty_signature, B256::ZERO));
+        if let alloy_zksync::network::unsigned_tx::TypedTransaction::Eip712(data) = unsigned_tx {
+            // What about the hash??
+            let signed_tx =
+                TxEnvelope::Eip712(Signed::new_unchecked(data, empty_signature, B256::ZERO));
 
-        let mut buffer = BytesMut::new();
-        signed_tx.encode_2718(&mut buffer);
-        println!("Transaction payload: {}", hex::encode(&buffer));
-        let p1 = provider.send_raw_transaction(&buffer).await.unwrap();
-        let receipt = p1.get_receipt().await.unwrap();
-        println!(
-            "Sent type C tx to: {} hash: {}",
-            destination_chain, receipt.inner.transaction_hash
-        )
-    } else {
-        panic!("Wrong type");
+            let mut buffer = BytesMut::new();
+            signed_tx.encode_2718(&mut buffer);
+            println!("Transaction payload: {}", hex::encode(&buffer));
+            let p1 = provider.send_raw_transaction(&buffer).await;
+
+            match p1 {
+                Ok(p1) => {
+                    let receipt = p1.get_receipt().await.unwrap();
+                    println!(
+                        "Sent type C tx to: {} hash: {}",
+                        destination_chain, receipt.inner.transaction_hash
+                    )
+                }
+                Err(error) => {
+                    println!("!! ERROR - {}", error);
+                }
+            }
+        } else {
+            panic!("Wrong type");
+        }
     }
 }
 
@@ -515,8 +561,34 @@ struct Cli {
     #[arg(short, long, num_args = 2, value_names = ["URL", "ADDRESS"])]
     rpc: Vec<String>,
 
+    // Specify the price of the base token  (10^18) in cents.
+    // For eth - you can set it to 200_000.
+    #[arg(long)]
+    base_token_price: Vec<u64>,
+
     #[arg(long)]
     private_key: String,
+
+    // How many assets should each paymaster hold. (default ~20USD).
+    #[arg(long, default_value = "2000")]
+    paymaster_balance_cents: u64,
+}
+
+pub fn to_human_size(input: U256) -> String {
+    let input = format!("{:?}", input);
+    let tmp: Vec<_> = input
+        .chars()
+        .rev()
+        .enumerate()
+        .flat_map(|(index, val)| {
+            if index > 0 && index % 3 == 0 {
+                vec!['_', val]
+            } else {
+                vec![val]
+            }
+        })
+        .collect();
+    tmp.iter().rev().collect()
 }
 
 #[tokio::main]
@@ -548,15 +620,32 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("Each RPC URL must be paired with an Ethereum address.");
         }
     }
+    assert_eq!(
+        rpc_addresses.len(),
+        cli.base_token_price.len(),
+        "Specify as many --base-token-price as --rpc-addresses"
+    );
 
     let mut providers_map = HashMap::new();
 
-    for (rpc, interop_address) in rpc_addresses {
+    for ((rpc, interop_address), base_token_price) in rpc_addresses
+        .into_iter()
+        .zip(cli.base_token_price.into_iter())
+    {
         let provider = zksync_provider()
             .with_recommended_fillers()
             .on_http(rpc.clone().parse().unwrap());
 
         let chain_id = provider.get_chain_id().await?;
+
+        let base_token: U256 = 1_000_000_000_000_000_000u64.try_into().unwrap();
+
+        let tokens_for_paymaster = base_token
+            .checked_mul(cli.paymaster_balance_cents.try_into().unwrap())
+            .unwrap()
+            .checked_div(base_token_price.try_into().unwrap())
+            .unwrap();
+
         let prev = providers_map.insert(
             chain_id,
             Arc::new(InteropChain {
@@ -565,7 +654,15 @@ async fn main() -> anyhow::Result<()> {
                 rpc: rpc.clone(),
                 chain_id,
                 admin_wallet: admin_wallet.clone(),
+                base_token_price,
+                tokens_for_paymaster,
             }),
+        );
+
+        println!(
+            "Interop on chain {}. paymaster tokens: {}",
+            chain_id,
+            to_human_size(tokens_for_paymaster)
         );
         if let Some(prev) = prev {
             panic!(
@@ -658,6 +755,8 @@ async fn main() -> anyhow::Result<()> {
                 .addOtherBridge(
                     source_chain.chain_id.try_into().unwrap(),
                     source_chain_token,
+                    destination_chain.base_token_price.try_into().unwrap(),
+                    source_chain.base_token_price.try_into().unwrap(),
                 )
                 .send()
                 .await

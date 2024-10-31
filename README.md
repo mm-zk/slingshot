@@ -69,8 +69,9 @@ forge script script/Deploy.s.sol:Deploy --rpc-url http://localhost:8012 --privat
 
 Run the CLI with the same private key, it will handle the message passing and transaction creation.
 
-```shell 
-cargo run -- -r http://localhost:8012 0xTHIS_IS_INTEROP_ADDRESS -r http://localhost:8013 0xTHIS_IS_INTEROP_ADDRESS --private-key 0x3d3cbc973389cb26f657686445bcc75662b415b656078503592ac8c1abb8810e
+
+```shell
+cargo run -- -r http://localhost:8012 0xTHIS_IS_INTEROP_ADDRESS -r http://localhost:8013 0xTHIS_IS_INTEROP_ADDRESS  --private-key 0x3d3cbc973389cb26f657686445bcc75662b415b656078503592ac8c1abb8810e --base-token-price 200000 --base-token-price 100
 ```
 
 ### Examples how to trigger:
@@ -120,8 +121,10 @@ cast call -r http://localhost:8013 GREETER_ADDRESS "greeting()(string)"
 * added tokens to paymasters - so it now actually calls the fee bundle, and collects the fees.
 
 * typeC validation works on AA
+* added typeC validation within paymaster.
+* add ratios
+* add nullifiers
+* make rust code more 'stable' 
+
 
 Next steps:
-* add ratios 
-* add typeC validation within paymaster too.
-* add nullifiers (at the end)

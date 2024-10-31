@@ -17,18 +17,28 @@ contract PaymasterToken is ERC20, Ownable {
     }
 
     mapping(uint256 => address) public remoteAddresses;
+    mapping(uint256 => uint256) public ratioNominator;
+    mapping(uint256 => uint256) public ratioDenominator;
 
     mapping(address => bool) public trustedAliasedAccounts;
 
+    // Adds information about the other bridge on other chain,
+    // with the currency ratios.
+    // This means that tokens that are SENT to other bridge, should apply this ratio.
+    // So setting nominator = 10, denominator = 1 --> means that when burning 5 tokens here,
+    // the other bridge should get 50 (so that 'base token' is weaker than ours.)
     function addOtherBridge(
         uint256 sourceChainId,
-        address sourceAddress
+        address sourceAddress,
+        uint256 _ratioNominator,
+        uint256 _ratioDenominator
     ) public onlyOwner {
         address aliasedAddress = InteropCenter(interopAddress)
             .getAliasedAccount(sourceAddress, sourceChainId);
         trustedAliasedAccounts[aliasedAddress] = true;
         remoteAddresses[sourceChainId] = sourceAddress;
-
+        ratioNominator[sourceChainId] = _ratioNominator;
+        ratioDenominator[sourceChainId] = _ratioDenominator;
         console2.log("Setting address as trusted", aliasedAddress);
     }
 
@@ -45,6 +55,16 @@ contract PaymasterToken is ERC20, Ownable {
         _mint(destinationAddress, amount);
     }
 
+    // remoteAmount of remoteBaseTokens are worth these many local tokens.
+    function computeRemoteAmountInLocalToken(
+        uint256 destinationChainId,
+        uint256 remoteAmount
+    ) public returns (uint256) {
+        return
+            ((remoteAmount * ratioDenominator[destinationChainId]) /
+                ratioNominator[destinationChainId]) + 1;
+    }
+
     function sendToRemote(
         uint256 bundleId,
         uint256 destinationChainId,
@@ -52,10 +72,13 @@ contract PaymasterToken is ERC20, Ownable {
         uint256 amount
     ) public {
         _burn(msg.sender, amount);
+        uint256 amountOnOtherSide = (amount *
+            ratioNominator[destinationChainId]) /
+            ratioDenominator[destinationChainId];
         bytes memory payload = abi.encodeWithSignature(
             "receiveTokenFromRemote(address,uint256)",
             remoteRecipient,
-            amount
+            amountOnOtherSide
         );
         address destinationAddress = remoteAddresses[destinationChainId];
         require(

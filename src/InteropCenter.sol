@@ -292,6 +292,9 @@ contract InteropCenter {
         return accountAddress;
     }
 
+    // Bundles that were already executed.
+    mapping(bytes32 => bool) public executedBundles;
+
     function executeInteropBundle(
         InteropMessage memory message,
         bytes memory proof
@@ -304,10 +307,17 @@ contract InteropCenter {
             "Untrusted source"
         );
         console2.log("inside ");
+        bytes32 messageHash = keccak256(abi.encode(message));
         require(
-            verifyInteropMessage(keccak256(abi.encode(message)), proof),
+            verifyInteropMessage(messageHash, proof),
             "Message not verified"
         );
+
+        require(
+            executedBundles[messageHash] == false,
+            "This bundle was already executed"
+        );
+        executedBundles[messageHash] = true;
 
         // Deserialize the InteropBundle from message data
         bytes1 prefix = message.data[0];
@@ -546,7 +556,7 @@ contract InteropCenter {
 
     function payWithTokenInternal(
         uint256 destinationChain,
-        uint256 amount
+        uint256 _amount
     ) private returns (bytes32) {
         console2.log(
             "Querying preferred paymaster",
@@ -559,6 +569,9 @@ contract InteropCenter {
 
         address localToken = localCrossPaymaster.paymasterTokenAddress();
         console2.log("Got local token", localToken);
+
+        uint256 amount = PaymasterToken(localToken)
+            .computeRemoteAmountInLocalToken(destinationChain, _amount);
 
         uint256 tokensMinted = 0;
 
@@ -627,7 +640,8 @@ contract InteropCenter {
         bytes memory feePayload = abi.encodeWithSignature(
             "approve(address,uint256)",
             remotePaymaster,
-            amount
+            // We use _amount here, as this will be a 'remote' amount.
+            _amount
         );
         console2.log("adding to bundle");
         // We're calling 'addToBundle' without 'external' - so msg sender is kept.
