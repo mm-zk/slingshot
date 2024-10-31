@@ -40,9 +40,26 @@ contract CrossPaymaster is IPaymaster {
         // -- that bundle should have given user tokens - then grab these tokens
         // -- and then pay for the user.
 
-        // TODO: check that whole TX is legit.
+        // Anyone could try to call this paymaster, to let's see that the transaction is really legit.
+        InteropCenter(interopCenterAddress).verifyPotentialTransaction(
+            _transaction
+        );
+        InteropCenter.InteropMessage memory message = InteropCenter(
+            interopCenterAddress
+        ).transactionToInteropMessage(_transaction);
 
-        console2.log("unpacking fee");
+        bytes32 msgHash = keccak256(abi.encode(message));
+        console2.log("Computed msg hash");
+        console2.logBytes32(msgHash);
+
+        bytes memory transactionInteropProof = new bytes(0);
+
+        InteropCenter(interopCenterAddress).verifyInteropMessage(
+            msgHash,
+            transactionInteropProof
+        );
+
+        console2.log("message is legit - unpacking fee");
         InteropCenter.InteropMessage memory feeMessage = abi.decode(
             _transaction.paymasterInput,
             (InteropCenter.InteropMessage)
@@ -66,11 +83,12 @@ contract CrossPaymaster is IPaymaster {
             .balanceOf(from);
         console2.log("Current balance", currentBalance);
 
-        // TODO: take correct amount of tokens.
+        uint256 tokensToPay = _transaction.maxFeePerGas * _transaction.gasLimit;
+        console2.log("Charging user ", tokensToPay);
         PaymasterToken(paymasterTokenAddress).transferFrom(
             from,
             address(this),
-            1
+            tokensToPay
         );
         console2.log("Paying bootloader");
 
