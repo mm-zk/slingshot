@@ -719,7 +719,7 @@ contract InteropCenter {
         );
 
         TransactionReservedStuff memory stuff = abi.decode(
-            transaction.reservedDynamic,
+            transaction.signature,
             (TransactionReservedStuff)
         );
 
@@ -734,10 +734,14 @@ contract InteropCenter {
     function verifyPotentialTransaction(
         Transaction memory transaction
     ) public view {
+        console2.log("Starting verification - unpacking from signature");
+
         TransactionReservedStuff memory stuff = abi.decode(
-            transaction.reservedDynamic,
+            transaction.signature,
             (TransactionReservedStuff)
         );
+        console2.log("stuff unpacked from sig");
+
         // stuff verification
 
         // sourceChainSender - below
@@ -761,6 +765,8 @@ contract InteropCenter {
         // transaction verification
         require(transaction.txType == 113, "Wrong tx type - expected 113");
 
+        console2.log("checking aliased account");
+
         // Check aliased account
         require(
             transaction.from ==
@@ -774,6 +780,7 @@ contract InteropCenter {
                 ),
             "wrong aliased account in from"
         );
+        console2.log("aliased account ok");
 
         require(
             transaction.to == uint256(uint160(address(this))),
@@ -781,7 +788,7 @@ contract InteropCenter {
         );
         // gas limit - copied to interop tx
         require(
-            transaction.gasPerPubdataByteLimit == 10000,
+            transaction.gasPerPubdataByteLimit == 50000,
             "Wrong gas per pubdata constant"
         );
         // max fee per gas - copied to interop tx
@@ -796,6 +803,8 @@ contract InteropCenter {
         require(transaction.reserved[1] == 0, "reserved field must not be set");
         require(transaction.reserved[2] == 0, "reserved field must not be set");
         require(transaction.reserved[3] == 0, "reserved field must not be set");
+
+        console2.log("computing selector");
 
         bytes4 selector = bytes4(
             keccak256(
@@ -842,7 +851,7 @@ contract InteropCenter {
     ) public pure returns (InteropTransaction memory) {
         console2.log("Starting internal conversion. unpacking stuff..");
         TransactionReservedStuff memory stuff = abi.decode(
-            transaction.reservedDynamic,
+            transaction.signature,
             (TransactionReservedStuff)
         );
 
@@ -911,11 +920,33 @@ contract InteropAccount is IAccount {
             )
         );
 
+        console2.log("Signature len", _transaction.signature.length);
+
         // We have to verify following things:
         //
         // * change this transaction into 'interop message' - and check.
 
-        // TODO: add authorization
+        console2.log("Verify incoming message");
+        InteropCenter(trustedInteropCenter).verifyPotentialTransaction(
+            _transaction
+        );
+        console2.log("Verification passed.");
+
+        InteropCenter.InteropMessage memory message = InteropCenter(
+            trustedInteropCenter
+        ).transactionToInteropMessage(_transaction);
+
+        bytes32 msgHash = keccak256(abi.encode(message));
+        console2.log("Computed msg hash");
+        console2.logBytes32(msgHash);
+
+        bytes memory proof = new bytes(0);
+
+        InteropCenter(trustedInteropCenter).verifyInteropMessage(
+            msgHash,
+            proof
+        );
+
         magic = ACCOUNT_VALIDATION_SUCCESS_MAGIC;
     }
 

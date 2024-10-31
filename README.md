@@ -116,7 +116,12 @@ cast call -r http://localhost:8013 GREETER_ADDRESS "greeting()(string)"
 * paymaster sees the paymaster tokens (but don't use them yet.)
 * rust now refills the paymaster (not Aliased accounts anymore)
 
+* paymaster addresses are now shared by interops.
+* added tokens to paymasters - so it now actually calls the fee bundle, and collects the fees.
+
+* typeC validation works on AA
+
 Next steps:
-* rust to 'share' the paymaster addresses - so that they can be 'encoded' directly on sending into the transactions
-* paymaster to actually take the token (1 for now).
+* add ratios 
+* add typeC validation within paymaster too.
 * add nullifiers (at the end)

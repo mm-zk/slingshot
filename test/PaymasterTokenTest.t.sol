@@ -79,10 +79,10 @@ contract TransactionConversion is Test, TestExt {
                 executionBundle,
                 proof
             ),
-            signature: hex"05",
+            signature: abi.encode(stuff),
             factoryDeps: new bytes32[](0),
             paymasterInput: abi.encode(feeBundle),
-            reservedDynamic: abi.encode(stuff)
+            reservedDynamic: hex""
         });
 
         InteropCenter.InteropMessage memory message = interopCenter

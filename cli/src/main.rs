@@ -97,6 +97,20 @@ sol! {
             address paymaster
         ) public;
 
+
+        struct TransactionReservedStuff {
+            // For now - figure out of there is a better place for them.
+
+            address sourceChainSender;
+            address interopMessageSender;
+            uint256 sourceChainId;
+            uint256 messageNum;
+            uint256 destinationChainId;
+            bytes32 bundleHash;
+            bytes32 feesBundleHash;
+        }
+
+
     }
 
     #[sol(rpc)]
@@ -287,17 +301,31 @@ impl InteropMessageParsed {
             proof,
         ));
 
+        let stuff = InteropCenter::TransactionReservedStuff {
+            sourceChainSender: interop_tx.sourceChainSender,
+            interopMessageSender: self.interop_message.sender,
+            sourceChainId: self.interop_message.sourceChainId,
+            messageNum: self.interop_message.messageNum,
+            destinationChainId: interop_tx.destinationChain,
+            bundleHash: interop_tx.bundleHash,
+            feesBundleHash: interop_tx.feesBundleHash,
+        };
+
+        let custom_signature = InteropCenter::TransactionReservedStuff::abi_encode(&stuff).into();
+
         let tx = TransactionRequest::default()
             .with_call(&calldata)
             .with_to(destination_interop_chain.interop_address)
             // FIXME: no value passing.
             //.with_value(interop_tx.value)
             .with_gas_limit(interop_tx.gasLimit.try_into().unwrap())
+            // Constant for now.
             .with_gas_per_pubdata(U256::from(50_000))
             .with_max_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
             .with_max_priority_fee_per_gas(interop_tx.gasPrice.try_into().unwrap())
             .with_from(from_addr)
-            .with_paymaster(paymaster_params);
+            .with_paymaster(paymaster_params)
+            .with_custom_signature(custom_signature);
 
         (destination_chain_id, tx)
     }
