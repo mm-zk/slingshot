@@ -45,13 +45,13 @@ contract Deploy is Script {
             address(crossPaymaster)
         );
 
-        address payable paymasterPayable = payable(address(crossPaymaster));
+        //address payable paymasterPayable = payable(address(crossPaymaster));
 
         // This doesn't pass any value in broadcast mode.. ehh ...
-        (bool success, ) = paymasterPayable.call{value: 50000}("");
-        require(success, "Call failed");
+        //(bool success, ) = paymasterPayable.call{value: 50000}("");
+        //require(success, "Call failed");
 
-        console2.log("Balance is ", paymasterPayable.balance);
+        //console2.log("Balance is ", paymasterPayable.balance);
 
         vm.stopBroadcast();
     }

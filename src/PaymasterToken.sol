@@ -12,7 +12,7 @@ contract PaymasterToken is ERC20, Ownable {
 
     constructor(
         address _interopAddress
-    ) ERC20("CrossChainPaymasterToken", "CCPT") Ownable(msg.sender) {
+    ) ERC20("SlingshotToken", "SLING") Ownable(msg.sender) {
         interopAddress = _interopAddress;
     }
 
@@ -59,7 +59,7 @@ contract PaymasterToken is ERC20, Ownable {
     function computeRemoteAmountInLocalToken(
         uint256 destinationChainId,
         uint256 remoteAmount
-    ) public returns (uint256) {
+    ) public view returns (uint256) {
         return
             ((remoteAmount * ratioDenominator[destinationChainId]) /
                 ratioNominator[destinationChainId]) + 1;

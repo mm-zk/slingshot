@@ -362,9 +362,6 @@ impl InteropChain {
         source_chain: U256,
         source_address: Address,
     ) -> Address {
-        println!("Calling {:?}", self.interop_address);
-        println!("params {:?} {:?}", source_address, source_chain);
-
         let contract = InteropCenter::new(self.interop_address, &self.provider);
         contract
             .getAliasedAccount(source_address, source_chain)
@@ -425,7 +422,7 @@ impl InteropChain {
                 .watch()
                 .await
                 .unwrap();
-            println!("Sending {} tokens to paymaster : {:?} ", limit, tx_hash);
+            println!("    Sending {} tokens to paymaster : {:?} ", limit, tx_hash);
         }
     }
 
@@ -494,7 +491,7 @@ async fn handle_type_a_message(
                 .await
                 .unwrap();
 
-            println!("Forwarded msg to {} with tx {:?}", chain_id, tx_hash);
+            println!("  Forwarded msg to {} with tx {:?}", chain_id, tx_hash);
         }
     }
 }
@@ -537,7 +534,7 @@ async fn handle_type_c_message(
                 Ok(p1) => {
                     let receipt = p1.get_receipt().await.unwrap();
                     println!(
-                        "Sent type C tx to: {} hash: {}",
+                        "    === Sent type C tx to: {} hash: {}",
                         destination_chain, receipt.inner.transaction_hash
                     )
                 }

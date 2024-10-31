@@ -31,6 +31,10 @@ contract InteropCenter {
         _;
     }
 
+    function name() public view virtual returns (string memory) {
+        return "InteropCenter";
+    }
+
     // Type A - Interop Message
 
     // Interop Event
@@ -444,7 +448,7 @@ contract InteropCenter {
     function _getZKSyncCreate2AddressRemote(
         bytes32 salt,
         address remoteInteropAddress
-    ) internal view returns (address) {
+    ) internal pure returns (address) {
         return
             address(
                 uint160(
@@ -729,7 +733,7 @@ contract InteropCenter {
 
         bytes memory serializedTransaction = abi.encodePacked(
             InteropCenter.TRANSACTION_PREFIX,
-            abi.encode(transaction)
+            abi.encode(interopTx)
         );
 
         TransactionReservedStuff memory stuff = abi.decode(
@@ -743,6 +747,7 @@ contract InteropCenter {
             sourceChainId: stuff.sourceChainId,
             messageNum: stuff.messageNum
         });
+        return message;
     }
 
     function verifyPotentialTransaction(
@@ -928,8 +933,8 @@ contract InteropAccount is IAccount {
     }
 
     function validateTransaction(
-        bytes32 _txHash,
-        bytes32 _suggestedSignedHash,
+        bytes32, // _txHash,
+        bytes32, // _suggestedSignedHash,
         Transaction calldata _transaction
     ) external payable returns (bytes4 magic) {
         SystemContractsCaller.systemCallWithPropagatedRevert(
@@ -967,9 +972,12 @@ contract InteropAccount is IAccount {
 
             bytes memory proof = new bytes(0);
 
-            InteropCenter(trustedInteropCenter).verifyInteropMessage(
-                msgHash,
-                proof
+            require(
+                InteropCenter(trustedInteropCenter).verifyInteropMessage(
+                    msgHash,
+                    proof
+                ),
+                "message not verified"
             );
         }
 
@@ -977,8 +985,8 @@ contract InteropAccount is IAccount {
     }
 
     function executeTransaction(
-        bytes32 _txHash,
-        bytes32 _suggestedSignedHash,
+        bytes32, // _txHash,
+        bytes32, // _suggestedSignedHash,
         Transaction calldata _transaction
     ) external payable {
         address to = address(uint160(_transaction.to));
@@ -1016,14 +1024,14 @@ contract InteropAccount is IAccount {
     // There is no point in providing possible signed hash in the `executeTransactionFromOutside` method,
     // since it typically should not be trusted.
     function executeTransactionFromOutside(
-        Transaction calldata _transaction
+        Transaction calldata // _transaction
     ) external payable {
         revert();
     }
 
     function payForTransaction(
-        bytes32 _txHash,
-        bytes32 _suggestedSignedHash,
+        bytes32, // _txHash,
+        bytes32, // _suggestedSignedHash,
         Transaction calldata _transaction
     ) external payable {
         bool success = _transaction.payToTheBootloader();
@@ -1031,8 +1039,8 @@ contract InteropAccount is IAccount {
     }
 
     function prepareForPaymaster(
-        bytes32 _txHash,
-        bytes32 _possibleSignedHash,
+        bytes32, // _txHash,
+        bytes32, // _possibleSignedHash,
         Transaction calldata _transaction
     ) external payable {}
 

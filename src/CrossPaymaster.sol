@@ -24,11 +24,15 @@ contract CrossPaymaster is IPaymaster {
         interopCenterAddress = _interopCenterAddress;
     }
 
+    function name() public view virtual returns (string memory) {
+        return "SlingshotPaymaster";
+    }
+
     function validateAndPayForPaymasterTransaction(
-        bytes32 _txHash,
-        bytes32 _suggestedSignedHash,
+        bytes32, // _txHash,
+        bytes32, // _suggestedSignedHash,
         Transaction calldata _transaction
-    ) external payable returns (bytes4 magic, bytes memory context) {
+    ) external payable returns (bytes4 magic, bytes memory) {
         // AAA - do not use msg.sender -- it is 'bootloader'..
         console2.log("using paymaster!!");
 
@@ -54,9 +58,12 @@ contract CrossPaymaster is IPaymaster {
 
         bytes memory transactionInteropProof = new bytes(0);
 
-        InteropCenter(interopCenterAddress).verifyInteropMessage(
-            msgHash,
-            transactionInteropProof
+        require(
+            InteropCenter(interopCenterAddress).verifyInteropMessage(
+                msgHash,
+                transactionInteropProof
+            ),
+            "interop message missing"
         );
 
         console2.log("message is legit - unpacking fee");
@@ -95,7 +102,7 @@ contract CrossPaymaster is IPaymaster {
         bool success = _transaction.payToTheBootloader();
         require(success, "Failed to pay the fee to the operator");
         console2.log("Paymaster is done");
-        magic = PAYMASTER_VALIDATION_SUCCESS_MAGIC;
+        return (PAYMASTER_VALIDATION_SUCCESS_MAGIC, new bytes(0));
     }
 
     function postTransaction(
