@@ -86,6 +86,8 @@ sol! {
             uint256 sourceChainId,
             address trustedSender
         ) public;
+        mapping(uint256 => address) public trustedSources;
+
 
         function deployAliasedAccount(
             address sourceAccount,
@@ -125,6 +127,9 @@ sol! {
 
     #[sol(rpc)]
     contract PaymasterToken {
+        mapping(uint256 => address) public remoteAddresses;
+        mapping(uint256 => uint256) public ratioNominator;
+        mapping(uint256 => uint256) public ratioDenominator;
         function addOtherBridge(
             uint256 sourceChainId,
             address sourceAddress,
@@ -679,23 +684,36 @@ async fn main() -> anyhow::Result<()> {
             let contract = InteropCenter::new(destination_chain.interop_address, &admin_provider);
 
             // TODO: before sending, maybe check if trust was already set?
-
-            let tx_hash = contract
-                .addTrustedSource(
-                    source_chain.chain_id.try_into().unwrap(),
-                    source_chain.interop_address,
-                )
-                .send()
+            let current_trusted_source = contract
+                .trustedSources(source_chain.chain_id.try_into().unwrap())
+                .call()
                 .await
                 .unwrap()
-                .watch()
-                .await
-                .unwrap();
+                ._0;
 
-            println!(
-                "Trust from {} to {} tx {:?}",
-                source_chain.chain_id, destination_chain.chain_id, tx_hash
-            );
+            if current_trusted_source != source_chain.interop_address {
+                let tx_hash = contract
+                    .addTrustedSource(
+                        source_chain.chain_id.try_into().unwrap(),
+                        source_chain.interop_address,
+                    )
+                    .send()
+                    .await
+                    .unwrap()
+                    .watch()
+                    .await
+                    .unwrap();
+
+                println!(
+                    "Trust from {} to {} tx {:?}",
+                    source_chain.chain_id, destination_chain.chain_id, tx_hash
+                );
+            } else {
+                println!(
+                    "Trust from {} to {}  - SKIP",
+                    source_chain.chain_id, destination_chain.chain_id
+                );
+            }
         }
     }
 
@@ -711,23 +729,36 @@ async fn main() -> anyhow::Result<()> {
             let contract = InteropCenter::new(destination_chain.interop_address, &admin_provider);
 
             // TODO: before sending, maybe check if trust was already set?
-
-            let tx_hash = contract
-                .setPreferredPaymaster(
-                    source_chain.chain_id.try_into().unwrap(),
-                    source_chain_paymaster,
-                )
-                .send()
+            let existing_paymaster = contract
+                .preferredPaymasters(source_chain.chain_id.try_into().unwrap())
+                .call()
                 .await
                 .unwrap()
-                .watch()
-                .await
-                .unwrap();
+                ._0;
 
-            println!(
-                "Paymaster Trust from {} to {} tx {:?}",
-                source_chain.chain_id, destination_chain.chain_id, tx_hash
-            );
+            if existing_paymaster != source_chain_paymaster {
+                let tx_hash = contract
+                    .setPreferredPaymaster(
+                        source_chain.chain_id.try_into().unwrap(),
+                        source_chain_paymaster,
+                    )
+                    .send()
+                    .await
+                    .unwrap()
+                    .watch()
+                    .await
+                    .unwrap();
+
+                println!(
+                    "Paymaster Trust from {} to {} tx {:?}",
+                    source_chain.chain_id, destination_chain.chain_id, tx_hash
+                );
+            } else {
+                println!(
+                    "Paymaster Trust from {} to {} -- SKIP",
+                    source_chain.chain_id, destination_chain.chain_id
+                );
+            }
         }
     }
 
@@ -747,24 +778,55 @@ async fn main() -> anyhow::Result<()> {
 
             // TODO: before sending, maybe check if trust was already set?
 
-            let tx_hash = contract
-                .addOtherBridge(
-                    source_chain.chain_id.try_into().unwrap(),
-                    source_chain_token,
-                    destination_chain.base_token_price.try_into().unwrap(),
-                    source_chain.base_token_price.try_into().unwrap(),
-                )
-                .send()
+            let existing_source_token = contract
+                .remoteAddresses(source_chain.chain_id.try_into().unwrap())
+                .call()
                 .await
                 .unwrap()
-                .watch()
-                .await
-                .unwrap();
+                ._0;
 
-            println!(
-                "Token Trust from {} to {} tx {:?}",
-                source_chain.chain_id, destination_chain.chain_id, tx_hash
-            );
+            let existing_nominator = contract
+                .ratioNominator(source_chain.chain_id.try_into().unwrap())
+                .call()
+                .await
+                .unwrap()
+                ._0;
+
+            let existing_denominator = contract
+                .ratioDenominator(source_chain.chain_id.try_into().unwrap())
+                .call()
+                .await
+                .unwrap()
+                ._0;
+
+            if source_chain_token != existing_source_token
+                || existing_nominator != destination_chain.base_token_price.try_into().unwrap()
+                || existing_denominator != source_chain.base_token_price.try_into().unwrap()
+            {
+                let tx_hash = contract
+                    .addOtherBridge(
+                        source_chain.chain_id.try_into().unwrap(),
+                        source_chain_token,
+                        destination_chain.base_token_price.try_into().unwrap(),
+                        source_chain.base_token_price.try_into().unwrap(),
+                    )
+                    .send()
+                    .await
+                    .unwrap()
+                    .watch()
+                    .await
+                    .unwrap();
+
+                println!(
+                    "Token Trust from {} to {} tx {:?}",
+                    source_chain.chain_id, destination_chain.chain_id, tx_hash
+                );
+            } else {
+                println!(
+                    "Token Trust from {} to {} -- SKIP",
+                    source_chain.chain_id, destination_chain.chain_id
+                );
+            }
         }
     }
 
